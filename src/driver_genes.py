@@ -66,7 +66,10 @@ def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_g
             test1 = test_name(x1,y1)
             test2 = test_name(x2,y2)
             direction = counts_matrix.loc[t1_cells,gene].mean() > counts_matrix.loc[t2_cells,gene].mean()
-            log2fold = np.log2(abs(counts_matrix.loc[t1_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t2_cells,gene].mean()))
+            if direction:
+                log2fold = np.log2(abs(counts_matrix.loc[t1_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t2_cells,gene].mean()))
+            else:
+                log2fold = np.log2(abs(counts_matrix.loc[t2_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t1_cells,gene].mean()))
             test_coeff.append([gene,test1[0],test1[1],test2[0],test2[1],log2fold,direction])
             
     top_genes = FindTopGenes(test_coeff, no_of_genes)
