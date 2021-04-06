@@ -27,7 +27,7 @@ def FindTopGenes(coeff_matrix, no_of_genes:int):
     df["max_coeff"] = max_coeff_list
     
     # select only significant genes
-    df = df[(df.corrected_pval1<=0.05) & (df.corrected_pval2<=0.05)]
+    df = df[(df.corrected_pval1<=0.05) & (df.corrected_pval2<=0.05) & (df.log2fold>=0.25)]
     df = df.sort_values(by=["log2fold","max_coeff"],ascending=False)
     return df.iloc[:min(no_of_genes,df.shape[0]),:]
 
@@ -66,7 +66,7 @@ def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_g
             test1 = test_name(x1,y1)
             test2 = test_name(x2,y2)
             direction = counts_matrix.loc[t1_cells,gene].mean() > counts_matrix.loc[t2_cells,gene].mean()
-            log2fold = np.log2(abs(counts_matrix.loc[t1_cells,gene].mean() - counts_matrix.loc[t2_cells,gene].mean()))
+            log2fold = np.log2(abs(counts_matrix.loc[t1_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t2_cells,gene].mean()))
             test_coeff.append([gene,test1[0],test1[1],test2[0],test2[1],log2fold,direction])
             
     top_genes = FindTopGenes(test_coeff, no_of_genes)

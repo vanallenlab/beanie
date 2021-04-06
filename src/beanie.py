@@ -356,7 +356,7 @@ class Beanie:
         
         self.de_summary.insert(1,"corrected_p",multipletests(self.de_summary.p, method = correction_method)[1])
         
-        self.de_summary.insert(3,"log2fold", np.log2(abs(self.signature_scores.loc[t1_cells,:].mean() - self.signature_scores.loc[t2_cells,:].mean())))
+        self.de_summary.insert(3,"log2fold", np.log2(abs(self.signature_scores.loc[t1_cells,:].mean())) - np.log2(abs(self.signature_scores.loc[t2_cells,:].mean())))
 
         nonrobust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=False).index
         
