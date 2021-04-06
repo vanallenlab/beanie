@@ -197,7 +197,7 @@ class Beanie:
                 return
             
             # check that number of treatment groups are 2
-            self.treatment_group_names = list(set(self.metad.treatment_group))
+            self.treatment_group_names = sorted(set(self.metad.treatment_group))
             if len(self.treatment_group_names)<2:
                 print("Atleast two treatment groups required.")
                 return
