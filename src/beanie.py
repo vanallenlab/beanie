@@ -15,20 +15,23 @@ from adjustText import adjust_text
 from itertools import product
 from statsmodels.stats.multitest import multipletests
 
-
 import driver_genes as dg
 import differential_expression as de
 
 from rpy2.robjects.packages import importr
 
 
-def CPMNormalisationLogScaling(counts):
-    """Function for CPM normalisation of the counts matrix, followed by log-scaling, to be used for SignatureScoringMean function.
+def CPMNormalisationLogScaling(counts,**kwargs):
+    """Function for CPM normalisation of the counts matrix, followed by log-scaling. Also removes genes which are expressed in less that 1% of cells.
     
     Parameters:
         counts                                        counts matrix, without normalisation (genes x cells)
     
     """
+    # filter genes that are expressed in less that 1% of the cells
+#     pct_cells = 0.01    
+#     counts_filtered = counts.loc[counts.gt(0).sum(axis=1)>int(pct_cells*counts.shape[1]),:]
+    
     return np.log((counts*pow(10,6)/counts.sum(axis=0))+1)
     
     
@@ -36,6 +39,8 @@ def SignatureScoringZNormalisedHelper(counts, signature):
     """Helper function for SignatureScoringZNormalised()
     
     """
+    random.seed(3120)
+
     score_df = pd.DataFrame(index=counts.columns)
     gene_list = counts.index.to_list()
     for x in signature.columns:
@@ -47,7 +52,6 @@ def SignatureScoringZNormalisedHelper(counts, signature):
         # permutation 200 times    
         null_dist = pd.DataFrame(index=counts.columns)
         for i in range(200):
-            random.seed(i)
             temp = random.sample(gene_list,len(temp))
             null_dist[i] = counts.loc[temp,:].mean(axis=0)
         score_df[x] = (counts.loc[temp,:].mean(axis=0) - null_dist.mean(axis=1))/null_dist.var(axis=1)
@@ -84,8 +88,8 @@ def SignatureScoringMean(counts, signatures):
     for x in signatures.columns:
         genes = signatures[x].dropna().to_list()
         temp = set(genes).intersection(gene_list)
-        if len(temp)<len(genes):
-            print("Dropping genes",set(genes).difference(temp),"from gene signature", x)
+#         if len(temp)<len(genes):
+#             print("Dropping genes",set(genes).difference(temp),"from gene signature", x)
         score_df[x] = counts.loc[temp,:].mean(axis=0)    
     
     return score_df
@@ -300,7 +304,7 @@ class Beanie:
         """
                 
         if scoring_method=="znorm":
-            self.signature_scores = SignatureScoringZNormalised(self.normalised_counts,self.signatures,multiprocessing.cpu_count())
+            self.signature_scores = SignatureScoringZNormalised(self.normalised_counts, self.signatures, multiprocessing.cpu_count())
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
         else:
@@ -358,7 +362,7 @@ class Beanie:
         
         self.de_summary.insert(3,"log2fold", abs(np.log2(abs(self.signature_scores.loc[t1_cells,:].mean())) - np.log2(abs(self.signature_scores.loc[t2_cells,:].mean()))))
 
-        nonrobust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=False).index
+        nonrobust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=(False,True)).index
         
         if len(nonrobust_sigs)>=5:
             self.top_signatures = nonrobust_sigs[:5].to_list()
