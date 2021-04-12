@@ -1,10 +1,9 @@
 from tqdm.auto import tqdm
 
-import random
-import multiprocessing
-
 import pandas as pd
 import numpy as np
+
+import multiprocessing
 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -18,106 +17,7 @@ from statsmodels.stats.multitest import multipletests
 import driver_genes as dg
 import differential_expression as de
 
-from rpy2.robjects.packages import importr
-
-
-def CPMNormalisationLogScaling(counts,**kwargs):
-    """Function for CPM normalisation of the counts matrix, followed by log-scaling. Also removes genes which are expressed in less that 1% of cells.
-    
-    Parameters:
-        counts                                        counts matrix, without normalisation (genes x cells)
-    
-    """
-    # filter genes that are expressed in less that 1% of the cells
-#     pct_cells = 0.01    
-#     counts_filtered = counts.loc[counts.gt(0).sum(axis=1)>int(pct_cells*counts.shape[1]),:]
-    
-    return np.log((counts*pow(10,6)/counts.sum(axis=0))+1)
-    
-    
-def SignatureScoringZNormalisedHelper(counts, signature):
-    """Helper function for SignatureScoringZNormalised()
-    
-    """
-    random.seed(3120)
-
-    score_df = pd.DataFrame(index=counts.columns)
-    gene_list = counts.index.to_list()
-    for x in signature.columns:
-        genes = signature[x].dropna().to_list()
-        temp = set(genes).intersection(gene_list)
-#         if len(temp)<len(genes):
-#             print("Dropping genes",set(genes).difference(temp),"from gene signature", x)
-            
-        # permutation 200 times    
-        null_dist = pd.DataFrame(index=counts.columns)
-        for i in range(200):
-            temp = random.sample(gene_list,len(temp))
-            null_dist[i] = counts.loc[temp,:].mean(axis=0)
-        score_df[x] = (counts.loc[temp,:].mean(axis=0) - null_dist.mean(axis=1))/null_dist.var(axis=1)
-    return(score_df)
-
-
-def SignatureScoringZNormalised(counts, signatures,n_cores=4):
-    """Function to do scoring and normalising by null distribution of randomly generated signature of same size.
-    
-    Parameters:
-        counts                                      counts matrix, without normalisation
-        signatures                                  signature score matrix
-        n_cores                                     number of cpu cores on which to parallelise
-    
-    """
-    df_split = np.array_split(signatures, n_cores, axis=1)
-    items = [(counts,d) for d in df_split]
-    with multiprocessing.Pool(processes=n_cores) as pool:
-        df = pd.concat(pool.starmap(SignatureScoringZNormalisedHelper, items), axis=1)
-    return df
-    
-
-def SignatureScoringMean(counts, signatures):
-    """Function for scoring using mean expression of genes in the gene signature.  
-    
-    Parameters:
-        counts                                      counts matrix, without normalisation
-        signatures                                  signature score matrix
-    
-    """
-    score_df = pd.DataFrame(index=counts.columns)
-    gene_list = counts.index.to_list()
-
-    for x in signatures.columns:
-        genes = signatures[x].dropna().to_list()
-        temp = set(genes).intersection(gene_list)
-#         if len(temp)<len(genes):
-#             print("Dropping genes",set(genes).difference(temp),"from gene signature", x)
-        score_df[x] = counts.loc[temp,:].mean(axis=0)    
-    
-    return score_df
-    
-def GetSignaturesMsigDb(msigdb_species,msigdb_category,msigdb_subcategory=None):
-    """Function to interface with msigdb (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp) 
-    and extract pathways/signatures. Alternative to providing a user defined signature file.
-    Uses R package msigdb for interface.
-    thought - can I remove dependence from this package?
-    
-    Parameters:
-        msigdb_species                              species for msigdb
-        msigdb_category                             categories: chosen from H,C1,...C8
-        msigdb_subcategory                          if present, for eg in case of C2.
-    
-    """
-    print("Extracting signatures from MsigDB: http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp")
-    msig = importr("msigdbr")
-    if msigdb_subcategory ==None:
-        r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category)
-    else:
-        r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category, subcategory=msigdb_subcategory)
-
-    pd_df = pd.DataFrame(r_df,index=r_df.colnames).T
-    m_df = pd_df[["gs_name","gene_symbol"]]
-    temp = m_df.groupby(['gs_name']).groups.keys()
-    m_df = pd.DataFrame(list(m_df.groupby('gs_name')["gene_symbol"].unique()), index=m_df.groupby(['gs_name']).groups.keys()).T
-    return m_df
+from utils import CPMNormalisationLogScaling, SignatureScoringZNormalisedHelper, SignatureScoringZNormalised, SignatureScoringMean, GetSignaturesMsigDb
 
 
 class Beanie:
@@ -159,7 +59,8 @@ class Beanie:
             self.treatment_group_names        list of treatment groups names in self.metad
             self.top_signatures               top 5 most significant and robust genes
             self.num_driver_genes             number of driver genes for which plots to be made
-        
+            self.t1_cells
+            self.t2_cells
         """
         
         # Read counts matrix
@@ -167,16 +68,16 @@ class Beanie:
             print("Reading counts matrix...")
             if counts_path.endswith(".csv"):
                 self.counts = pd.read_csv(counts_path, index_col=0, sep=",")
-                self.normalised_counts = CPMNormalisationLogScaling(self.counts)
+#                 self.normalised_counts = CPMNormalisationLogScaling(self.counts)
             elif counts_path.endswith(".tsv"):
                 self.counts = pd.read_csv(counts_path, index_col=0, sep="\t")
-                self.normalised_counts = CPMNormalisationLogScaling(self.counts)
+#                 self.normalised_counts = CPMNormalisationLogScaling(self.counts)
             else:
                 print("Counts matrix should be of the format .csv or .tsv")
                 return
             
             # check that the index is not numbers
-            if self.normalised_counts.index.dtype=="int64":
+            if self.counts.index.dtype=="int64":
                 print("Gene names cannot be integers. Please check input format for counts matrix.")
                 return
         
@@ -210,7 +111,7 @@ class Beanie:
                 return
             
             # check if cell ids in self.normalised_counts and self.metad match
-            if set(self.normalised_counts.columns) != set(self.metad.index):
+            if set(self.counts.columns) != set(self.metad.index):
                 print("The cell ids in counts matrix and meta data file should match.")
                 return
         
@@ -254,7 +155,7 @@ class Beanie:
                     return
                 
                 # check if self.signature_scores has the same cell ids as self.normalised_counts
-                if set(self.signature_scores.index) != set(self.normalised_counts.columns):
+                if set(self.signature_scores.index) != set(self.counts.columns):
                     print("The cell ids in counts matrix and signature scores matrix should match.")
                 
             else:
@@ -292,6 +193,10 @@ class Beanie:
         for xid in self.t2_ids:
             self.d2_all[xid]=self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list()
             
+        self.t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
+        self.t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()    
+        
+        self.normalised_counts = CPMNormalisationLogScaling(self.counts, self.t1_cells, self.t2_cells)
         # TODO: calculate max subsample size
         self.max_subsample_size = 85
         
@@ -318,12 +223,9 @@ class Beanie:
 #             self.signature_scores = SignatureScoringMean(self.normalised_counts, self.signatures)
 
         self.num_driver_genes=num_genes
-    
-        t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
-        t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()
         
         for x in self.signatures.columns:
-            self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, t1_cells, t2_cells, driver_method, num_genes)
+            self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all, driver_method, num_genes)
     
     def DifferentialExpression(self, cells_to_subsample=None, alpha=0.05, min_ratio=0.9,subsamples=501,**kwargs):
         """Function for finding out differentially expressed robust and statistically significant signatures. 
@@ -351,23 +253,20 @@ class Beanie:
         self.de_obj.run()
         self.de_summary = self.de_obj.summarize(alpha, min_ratio)
         
-        
-        t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
-        t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()
-        
-        self.de_summary.insert(2,"direction",self.signature_scores.loc[t1_cells,:].median() > self.signature_scores.loc[t2_cells,:].median())
+                
+        self.de_summary.insert(2,"direction",self.signature_scores.loc[self.t1_cells,:].median() > self.signature_scores.loc[self.t2_cells,:].median())
         self.de_summary["direction"] = [self.treatment_group_names[0] if x==True else self.treatment_group_names[1] for x in self.de_summary.direction]
         
         self.de_summary.insert(1,"corrected_p",multipletests(self.de_summary.p, method = correction_method)[1])
         
-        self.de_summary.insert(3,"log2fold", abs(np.log2(abs(self.signature_scores.loc[t1_cells,:].mean())) - np.log2(abs(self.signature_scores.loc[t2_cells,:].mean()))))
+        self.de_summary.insert(3,"log2fold", abs(np.log2(abs(self.signature_scores.loc[self.t1_cells,:].mean())) - np.log2(abs(self.signature_scores.loc[self.t2_cells,:].mean()))))
 
-        nonrobust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=(False,True)).index
+        robust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=(False,True)).index
         
-        if len(nonrobust_sigs)>=5:
-            self.top_signatures = nonrobust_sigs[:5].to_list()
+        if len(robust_sigs)>=5:
+            self.top_signatures = robust_sigs[:5].to_list()
         else:
-            self.top_signatures = nonrobust_sigs.to_list()
+            self.top_signatures = robust_sigs.to_list()
     
     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
                                                  subsamples=501, **kwargs):
@@ -615,3 +514,5 @@ class Beanie:
         upset_df = upset_df.groupby(by = signature_names).first()
         self.upsetplot_signature_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality')
         return
+    
+    

@@ -11,28 +11,34 @@ def FindTopGenes(coeff_matrix, no_of_genes:int):
     if no_of_genes>len(coeff_matrix):
 #         print("The signature has lesser number of genes")
         no_of_genes = len(coeff_matrix)
-    df = pd.DataFrame(coeff_matrix, columns=["gene_name","coeff1","pval1","coeff2","pval2","log2fold","direction"])
+    df = pd.DataFrame(coeff_matrix, columns=["gene_name","log2fold","direction"])
     df = df.set_index("gene_name")
-    df.insert(3,"corrected_pval1",multipletests(df.pval1, method = correction_method)[1])
-    df.insert(6,"corrected_pval2",multipletests(df.pval2, method = correction_method)[1])
+#     df.insert(3,"corrected_pval1",multipletests(df.pval1, method = correction_method)[1])
+#     df.insert(6,"corrected_pval2",multipletests(df.pval2, method = correction_method)[1])
 
-    max_coeff_list = []
-    for count in range(0,df.shape[0]):
-        if (df.coeff1[count]>df.coeff2[count]) & (df.direction[count]):
-            max_coeff_list.append(df.coeff1[count])
-        elif (df.coeff1[count]<df.coeff2[count]) & (df.direction[count]==False):
-            max_coeff_list.append(df.coeff2[count])
-        else:
-            max_coeff_list.append(None)
-    df["max_coeff"] = max_coeff_list
+#     max_coeff_list = []
+#     min_qval_list = []
+#     for count in range(0,df.shape[0]):
+#         if (df.coeff1[count]>df.coeff2[count]) & (df.direction[count]):
+#             max_coeff_list.append(df.coeff1[count])
+#             min_qval_list.append(df.corrected_pval1[count])
+#         elif (df.coeff1[count]<df.coeff2[count]) & (df.direction[count]==False):
+#             max_coeff_list.append(df.coeff2[count])
+#             min_qval_list.append(df.corrected_pval2[count])
+#         else:
+#             max_coeff_list.append(None)
+#             min_qval_list.append(None)
+#     df["max_coeff"] = max_coeff_list
+#     df["min_qval"] = min_qval_list
     
     # select only significant genes
-    df = df[(df.corrected_pval1<=0.05) & (df.corrected_pval2<=0.05) & (df.log2fold>=0.25)]
-    df = df.sort_values(by=["log2fold","max_coeff"],ascending=False)
+    df = df[(df.log2fold>=0.5)]
+    df = df.sort_values(by=["log2fold","direction"],ascending=(False,False))
+#     return df
     return df.iloc[:min(no_of_genes,df.shape[0]),:]
 
 
-def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_genes, t1_cells, t2_cells, coeff_name="spearman",no_of_genes=10):
+def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_genes, d1, d2, coeff_name="spearman",no_of_genes=10):
     """ Perform correlation test to find genes which are correlated to the signature score.
     
     Parameters:
@@ -40,6 +46,8 @@ def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_g
         signature_matrix           cells x signatures matrix for calculated signature scores
         counts_matrix              cells x genes counts matrix
         signature_genes            list of genes which are contained in the signature_name
+        d1
+        d2
         coeff_name                 type of correlation to use, default = spearman
         no_of_genes                number of top genes required to calculate
     
@@ -54,23 +62,28 @@ def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_g
     if coeff_name=="kendall":
         test_name = kendalltau
         
-    x1 = signature_matrix.loc[t1_cells,signature_name].values
-    x2 = signature_matrix.loc[t2_cells,signature_name].values
+    t1_cells = []
+    temp = [t1_cells.extend(a) for a in d1.values()]
+    t2_cells = []
+    temp = [t2_cells.extend(a) for a in d2.values()]
     
+    t1_ids = list(d1.keys())
+    t2_ids = list(d2.keys())
+
     test_coeff = []
     
     for gene in signature_genes:
         if gene in counts_matrix.columns:
-            y1 = counts_matrix.loc[t1_cells,gene].values
-            y2 = counts_matrix.loc[t2_cells,gene].values
-            test1 = test_name(x1,y1)
-            test2 = test_name(x2,y2)
             direction = counts_matrix.loc[t1_cells,gene].mean() > counts_matrix.loc[t2_cells,gene].mean()
-            if direction:
-                log2fold = np.log2(abs(counts_matrix.loc[t1_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t2_cells,gene].mean()))
-            else:
-                log2fold = np.log2(abs(counts_matrix.loc[t2_cells,gene].mean())) - np.log2(abs(counts_matrix.loc[t1_cells,gene].mean()))
-            test_coeff.append([gene,test1[0],test1[1],test2[0],test2[1],log2fold,direction])
+            a1=[]
+            a2=[]
+            for id_name in t1_ids:
+                a1.append(counts_matrix.loc[d1[id_name],gene].mean())
+            for id_name in t2_ids:
+                a2.append(counts_matrix.loc[d2[id_name],gene].mean())
+            log2fold = abs(np.log2(abs(np.mean(a1))+0.000001) - np.log2(abs(np.mean(a2))+0.000001))
+            
+            test_coeff.append([gene,log2fold,direction])
             
     top_genes = FindTopGenes(test_coeff, no_of_genes)
     return top_genes
