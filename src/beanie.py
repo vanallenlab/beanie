@@ -196,7 +196,7 @@ class Beanie:
         self.t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
         self.t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()    
         
-        self.normalised_counts = CPMNormalisationLogScaling(self.counts, self.t1_cells, self.t2_cells)
+        self.normalised_counts = CPMNormalisationLogScaling(self.counts)
         # TODO: calculate max subsample size
         self.max_subsample_size = 85
         

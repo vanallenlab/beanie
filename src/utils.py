@@ -10,7 +10,7 @@ from scipy.stats import zscore
 from rpy2.robjects.packages import importr
 
 
-def CPMNormalisationLogScaling(counts,t1_cells,t2_cells,**kwargs):
+def CPMNormalisationLogScaling(counts,**kwargs):
     """Function for CPM normalisation of the counts matrix, followed by log-scaling. Also removes genes which are expressed in less that 1% of cells.
     
     Parameters:
