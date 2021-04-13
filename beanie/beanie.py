@@ -14,10 +14,10 @@ from adjustText import adjust_text
 from itertools import product
 from statsmodels.stats.multitest import multipletests
 
-import driver_genes as dg
-import differential_expression as de
+from . import driver_genes as dg
+from . import differential_expression as de
 
-from utils import CPMNormalisationLogScaling, SignatureScoringZNormalisedHelper, SignatureScoringZNormalised, SignatureScoringMean, GetSignaturesMsigDb
+from .utils import CPMNormalisationLogScaling, SignatureScoringZNormalisedHelper, SignatureScoringZNormalised, SignatureScoringMean, GetSignaturesMsigDb
 
 
 class Beanie:
