@@ -487,7 +487,7 @@ class Beanie:
         gs.update(wspace=0.015, hspace=0.05)
         
         ax_main = plt.subplot(gs[1:4, :3])
-        ax_main.imshow(mat.T, cmap="Pastel1_r",interpolation="nearest",aspect="auto")
+        ax_main.imshow(mat.T, cmap="RdPu",interpolation="nearest",aspect="auto",vmin=0, vmax=1.5, alpha=0.5)
         # ax_main.grid(color='#E8D5DE', linestyle='-', linewidth=1)
         ax_main.set_yticks(range(0,mat.T.shape[0]))
         ax_main.set_yticklabels(mat.T.index.to_list());
@@ -495,7 +495,7 @@ class Beanie:
         ax_main.set_xticklabels(mat.T.columns.to_list(), rotation=90);
         
         ax_yDist = plt.subplot(gs[1:4, 3], sharey=ax_main)
-        ax_yDist.barh(range(mat.shape[1]),mat.T.sum(axis=1),color="#CDA3D5")
+        ax_yDist.barh(range(mat.shape[1]),mat.T.sum(axis=1),color="#FED298")
         ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
         ax_yDist.set_xlabel("Frequency");
         ax_yDist.set_xlim([0,mat.T.shape[1]]);
