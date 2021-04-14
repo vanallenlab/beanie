@@ -9,6 +9,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib as mpl
+from matplotlib.gridspec import GridSpec
 import upsetplot
 from adjustText import adjust_text
 from itertools import product
@@ -17,13 +18,14 @@ from statsmodels.stats.multitest import multipletests
 from . import driver_genes as dg
 from . import differential_expression as de
 
-from .utils import CPMNormalisationLogScaling, SignatureScoringZNormalisedHelper, SignatureScoringZNormalised, SignatureScoringMean, GetSignaturesMsigDb
+from .utils import *
 
 
 class Beanie:
     
     def __init__(self, counts_path: str, metad_path: str, sig_path = None, sig_score_path =None, **kwargs):
-        """Class initialisation.
+        """
+        Class initialisation.
         
         Parameters:
             counts_path                       path to the normalised counts_matrix file
@@ -61,10 +63,12 @@ class Beanie:
             self.num_driver_genes             number of driver genes for which plots to be made
             self.t1_cells
             self.t2_cells
+            self.patient_dropout_plot
         """
         
         # Read counts matrix
         try:
+            print("************************************************************")
             print("Reading counts matrix...")
             if counts_path.endswith(".csv"):
                 self.counts = pd.read_csv(counts_path, index_col=0, sep=",")
@@ -83,6 +87,7 @@ class Beanie:
         
         except FileNotFoundError:
             print("Counts file does not exist. Please check input counts_path.")
+            print("************************************************************")
             return
         
         # Read meta data file
@@ -117,6 +122,7 @@ class Beanie:
         
         except FileNotFoundError:
             print("Meta data file does not exist. Please check metad_path.")
+            print("************************************************************")
             return
         
         try:
@@ -140,6 +146,7 @@ class Beanie:
                 
         except FileNotFoundError:
             print("Signature file does not exist. Please check sig_path.")
+            print("************************************************************")
             return
 
         # Read signature scores file
@@ -163,6 +170,7 @@ class Beanie:
         
         except FileNotFoundError:
             print("Signature scores file does not exist. Please check sig_score_path.")
+            print("************************************************************")
             return
         
             
@@ -200,35 +208,42 @@ class Beanie:
         # TODO: calculate max subsample size
         self.max_subsample_size = 85
         
+        print("************************************************************")
+        
     def SignatureScoring(self, scoring_method: str):
-        """ Function to do signature scoring. If signature_scores file is already provided then the function skipped.
+        """ 
+        Function to do signature scoring. If signature_scores file is already provided then the function skipped.
         
         Parameters:
             scoring_method                          choice between vision and mean to score the cells.
         
         """
-                
+        print("************************************************************")
+        print("Calculating Signature Scores...")
         if scoring_method=="znorm":
             self.signature_scores = SignatureScoringZNormalised(self.normalised_counts, self.signatures, multiprocessing.cpu_count())
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
         else:
             print("Please choose scoring method from: 'vision', 'mean'.")
+            print("************************************************************")
             return
+        print("************************************************************")
 
     
     def DriverGenes(self,driver_method="spearman", num_genes=10):
-    
-#         if not self.signature_scores:
-#             self.signature_scores = SignatureScoringMean(self.normalised_counts, self.signatures)
-
+        
+        print("************************************************************")
+        print("Calculating Driver Genes")
         self.num_driver_genes=num_genes
         
-        for x in self.signatures.columns:
+        for x in tqdm(self.signatures.columns):
             self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all, driver_method, num_genes)
+        print("************************************************************")
     
-    def DifferentialExpression(self, cells_to_subsample=None, alpha=0.05, min_ratio=0.9,subsamples=501,**kwargs):
-        """Function for finding out differentially expressed robust and statistically significant signatures. 
+    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, **kwargs):
+        """
+        Function for finding out differentially expressed robust and statistically significant signatures. 
         
         Parameters: 
             cells_to_subsample                     cells that should be subsampled per patient; if no input provided, function to choose the max possible subsample size
@@ -242,13 +257,16 @@ class Beanie:
         """
         
         correction_method = "bonferroni"
-        if cells_to_subsample == None:
-            cells_to_subsample = self.max_subsample_size
+        if cells_to_subsample_1 == None:
+            cells_to_subsample_1 = self.max_subsample_size
+            
+        if cells_to_subsample_2 == None:
+            cells_to_subsample_2 = self.max_subsample_size
         
         self.de_obj = de.ExcludeSampleSubsampledDE(self.signature_scores.T, 
                                                self.d1_all, self.d2_all, 
-                                               group1_sample_cells=cells_to_subsample, 
-                                               group2_sample_cells=cells_to_subsample,
+                                               group1_sample_cells=cells_to_subsample_1, 
+                                               group2_sample_cells=cells_to_subsample_2,
                                                samples_per_fold=subsamples,**kwargs)
         self.de_obj.run()
         self.de_summary = self.de_obj.summarize(alpha, min_ratio)
@@ -270,7 +288,8 @@ class Beanie:
     
     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
                                                  subsamples=501, **kwargs):
-        """Function for generating saturation curve for simulation. Helps in estimating the confidence levels 
+        """
+        Function for generating saturation curve for simulation. Helps in estimating the confidence levels 
         
         Parameters: 
             alpha                                  p-value cutoff
@@ -299,7 +318,8 @@ class Beanie:
             
             
     def PlotConfidenceDifferentialExpression(self):
-        """Function to plot number of signatures which are robust, non-robust, statistically significant, for different
+        """
+        Function to plot number of signatures which are robust, non-robust, statistically significant, for different
         number of cells subsampled per patient.
         
         """
@@ -355,7 +375,8 @@ class Beanie:
 
                
     def BarPlot(self):
-        """Function for generating barplot for statistically significant pathways (robust and non-robust).
+        """
+        Function for generating barplot for statistically significant pathways (robust and non-robust).
         Hatched bars represent signatures with statistically significant differences between groups but non-robust to subsampling.
         Solid bars represent robust signatures with statistically significant differences.
         
@@ -396,7 +417,8 @@ class Beanie:
 
 
     def BeeSwarmPlot(self):
-        """Function for plotting the fold rejection ratio for each signature. It labels the patients which are outliers, 
+        """
+        Function for plotting the fold rejection ratio for each signature. It labels the patients which are outliers, 
         and may have led to the signature being non-robust despite having a significant p-val.
         
         """
@@ -428,10 +450,80 @@ class Beanie:
         self.beeswarmplot = fig
 
         return
+    
+    def PatientDropoutPlot(self, annotate=True):
+        """
+        Function to Matrix for whether a patient 
         
+        """
+        non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corrected_p<=0.05)]
+        non_robust_sig_plot = non_robust_sig.iloc[:,6:(non_robust_sig.shape[1]-1)]
+        non_robust_sig_plot.columns = [x.split("_")[1] for x in non_robust_sig_plot.columns]
         
+        size=non_robust_sig_plot.shape[0]
+        
+        # Label the outliers
+        q25 = non_robust_sig_plot.T.quantile(0.25).to_numpy()
+        q75 = non_robust_sig_plot.T.quantile(0.75).to_numpy()
+        outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
+
+        mat = pd.DataFrame(index = non_robust_sig_plot.index, columns = non_robust_sig_plot.columns)
+        for i in range(non_robust_sig_plot.shape[0]):
+            fr_ratio = non_robust_sig_plot.iloc[i,:]
+            pats = [x for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
+            mat.iloc[i,:] = mat.columns.isin(pats).astype(int)
+        
+        # sort matrix accoring to frequency (rowsum, colsum)
+        mat.loc["sum",] = mat.sum(axis=0)
+        mat = mat.T.sort_values(by=["sum"]).T.drop(["sum"])
+        
+        mat["sum"] = mat.sum(axis=1)
+        mat = mat.sort_values(by=["sum"]).drop(["sum"], axis=1)
+
+        df_main = non_robust_sig_plot.loc[mat.index,mat.columns]
+        
+        fig = plt.figure(figsize=(15,10))
+        gs = GridSpec(4,4)
+        gs.update(wspace=0.015, hspace=0.05)
+        
+        ax_main = plt.subplot(gs[1:4, :3])
+        ax_main.imshow(mat.T, cmap="Pastel1_r",interpolation="nearest",aspect="auto")
+        # ax_main.grid(color='#E8D5DE', linestyle='-', linewidth=1)
+        ax_main.set_yticks(range(0,mat.T.shape[0]))
+        ax_main.set_yticklabels(mat.T.index.to_list());
+        ax_main.set_xticks(range(0,mat.T.shape[1]))
+        ax_main.set_xticklabels(mat.T.columns.to_list(), rotation=90);
+        
+        ax_yDist = plt.subplot(gs[1:4, 3], sharey=ax_main)
+        ax_yDist.barh(range(mat.shape[1]),mat.T.sum(axis=1),color="#CDA3D5")
+        ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
+        ax_yDist.set_xlabel("Frequency");
+        ax_yDist.set_xlim([0,mat.T.shape[1]]);
+        
+        ax_xDist = plt.subplot(gs[0:1, :3], sharex=ax_main)
+        sns.boxplot(data=df_main.T, color="#6CC9B6",ax=ax_xDist)
+        if annotate:
+            q25 = df_main.T.quantile(0.25).to_numpy()
+            q75 = df_main.T.quantile(0.75).to_numpy()
+            outlier_top_lim = q75 + 1.5 * (q75 - q25)
+            outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
+            texts = []
+            for i in range(df_main.shape[0]):
+                fr_ratio = df_main.iloc[i,:]
+                pats = [x for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
+                texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center') for j in range(len(pats))])
+            ax_xDist.set_ylim(bottom=-0.5)
+            adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
+        ax_xDist.set_xticks([])
+        ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
+        ax_xDist.set_ylabel("Fold Rejection Ratio");
+
+        self.patient_dropout_plot = fig
+        return
+
     def HeatmapDriverGenes(self, signature_names=None, **kwargs):
-        """Function for plotting driver genes (by default top 10) of all robust signatures.
+        """
+        Function for plotting driver genes (by default top 10) of all robust signatures.
         thought - is it possible to incorporate corr-coeff, pval as well in this plot
         
         Parameters:
@@ -450,9 +542,13 @@ class Beanie:
         return
         
     def UpsetPlotDriverGenes(self, signature_names=None):
-        """Function to plot intersection of driver genes between different signatures 
+        """
+        Function to plot intersection of driver genes between different signatures 
         (option to either enter the signature names list for which you want the plot; 
         by default will pick the top5 signatures).
+        
+        Parameters:
+            signature_names                     (optional) names of signatures for which upsetplot should be plotted 
         
         """
                         
@@ -486,7 +582,8 @@ class Beanie:
         return
         
     def UpsetPlotSignatureGenes(self, signature_names=None):
-        """Function to plot intersection of genes in every signature.
+        """
+        Function to plot intersection of genes in every signature.
         
         Parameters:
             top_features            list of signatures for which to plot upsetplot
