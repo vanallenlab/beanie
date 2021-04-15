@@ -25,7 +25,6 @@ class Beanie:
     
     def __init__(self, counts_path: str, metad_path: str, sig_path = None, sig_score_path =None, **kwargs):
         """
-        Class initialisation.
         
         Parameters:
             counts_path                       path to the normalised counts_matrix file
@@ -64,6 +63,8 @@ class Beanie:
             self.t1_cells
             self.t2_cells
             self.patient_dropout_plot
+            self.group_direction              direction of interest where enrichment should be seen; default group1
+            self.__candidate_robust_sigs_df
         """
         
         # Read counts matrix
@@ -100,30 +101,32 @@ class Beanie:
             else:
                 print("Meta data should be of the format .csv or .tsv")
                 return
-
-            # check if the header has correct columns needed.
-            if np.sum(self.metad.columns.isin(['treatment_group','patient_id']))!=2:
-                print("Please check input format for meta data file. 'treatment_group','patient_id' columns should be present.")
-                return
-            
-            # check that number of treatment groups are 2
-            self.treatment_group_names = sorted(set(self.metad.treatment_group))
-            if len(self.treatment_group_names)<2:
-                print("Atleast two treatment groups required.")
-                return
-            elif len(self.treatment_group_names)>2:
-                print("The method is not currently supported for more than two treatment groups.")
-                return
-            
-            # check if cell ids in self.normalised_counts and self.metad match
-            if set(self.counts.columns) != set(self.metad.index):
-                print("The cell ids in counts matrix and meta data file should match.")
-                return
         
         except FileNotFoundError:
             print("Meta data file does not exist. Please check metad_path.")
             print("************************************************************")
             return
+        
+        # Check if metadata file is in the correct format
+        # check if the header has correct columns needed.
+        if np.sum(self.metad.columns.isin(['treatment_group','patient_id']))!=2:
+            print("Please check input format for meta data file. 'treatment_group','patient_id' columns should be present.")
+            return
+
+        # check that number of treatment groups are 2
+        self.treatment_group_names = sorted(set(self.metad.treatment_group))
+        if len(self.treatment_group_names)<2:
+            print("Atleast two treatment groups required.")
+            return
+        elif len(self.treatment_group_names)>2:
+            print("The method is not currently supported for more than two treatment groups.")
+            return
+
+        # check if cell ids in self.normalised_counts and self.metad match
+        if set(self.counts.columns) != set(self.metad.index):
+            print("The cell ids in counts matrix and meta data file should match.")
+            return
+        
         
         try:
             if sig_path!= None:
@@ -188,6 +191,8 @@ class Beanie:
         self.de_summary_simulation = list()
         self.top_signatures=None
         self.num_driver_genes=10
+        self.patient_dropout_plot=None
+        self.group_direction = self.treatment_group_names[0]
                         
         
         self.t1_ids = list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[0]].patient_id))
@@ -210,37 +215,24 @@ class Beanie:
         
         print("************************************************************")
         
-    def SignatureScoring(self, scoring_method: str):
+    def SignatureScoring(self, scoring_method="mean"):
         """ 
-        Function to do signature scoring. If signature_scores file is already provided then the function skipped.
+        Function to do signature scoring using in-built scoring functions.
         
         Parameters:
-            scoring_method                          choice between vision and mean to score the cells.
+            scoring_method                          choice between mean and znorm to score the cells.
         
         """
-        print("************************************************************")
-        print("Calculating Signature Scores...")
+        
         if scoring_method=="znorm":
             self.signature_scores = SignatureScoringZNormalised(self.normalised_counts, self.signatures, multiprocessing.cpu_count())
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
         else:
             print("Please choose scoring method from: 'vision', 'mean'.")
-            print("************************************************************")
             return
-        print("************************************************************")
 
-    
-    def DriverGenes(self,driver_method="spearman", num_genes=10):
         
-        print("************************************************************")
-        print("Calculating Driver Genes")
-        self.num_driver_genes=num_genes
-        
-        for x in tqdm(self.signatures.columns):
-            self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all, driver_method, num_genes)
-        print("************************************************************")
-    
     def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, **kwargs):
         """
         Function for finding out differentially expressed robust and statistically significant signatures. 
@@ -270,21 +262,44 @@ class Beanie:
                                                samples_per_fold=subsamples,**kwargs)
         self.de_obj.run()
         self.de_summary = self.de_obj.summarize(alpha, min_ratio)
-        
-                
-        self.de_summary.insert(2,"direction",self.signature_scores.loc[self.t1_cells,:].median() > self.signature_scores.loc[self.t2_cells,:].median())
-        self.de_summary["direction"] = [self.treatment_group_names[0] if x==True else self.treatment_group_names[1] for x in self.de_summary.direction]
-        
+        # correct for multiple hypothesis
         self.de_summary.insert(1,"corrected_p",multipletests(self.de_summary.p, method = correction_method)[1])
-        
-        self.de_summary.insert(3,"log2fold", abs(np.log2(abs(self.signature_scores.loc[self.t1_cells,:].mean())) - np.log2(abs(self.signature_scores.loc[self.t2_cells,:].mean()))))
 
-        robust_sigs = self.de_summary[(self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)].sort_values(by=["log2fold","corrected_p"],ascending=(False,True)).index
+        # calculate other stats
+        results_df = CalculateLog2FoldChangeSigScores(self.signature_scores, self.d1_all, self.d2_all)
+        self.de_summary = pd.concat([results_df,self.de_summary],axis=1, sort=False)
+        self.de_summary["direction"] = [self.treatment_group_names[0] if x==True else self.treatment_group_names[1] for x in self.de_summary.direction]
+
+        # calculate the robust signatures in direction of interest: by default gr1 
+        self.__candidate_robust_sigs_df = self.de_summary[(self.de_summary.direction==self.group_direction) & (self.de_summary.nonrobust==False) & (self.de_summary.corrected_p<=0.05)]
+        
+        robust_sigs = self.__candidate_robust_sigs_df.sort_values(by=["log2fold","corrected_p"],ascending=(False,True)).index
         
         if len(robust_sigs)>=5:
             self.top_signatures = robust_sigs[:5].to_list()
         else:
             self.top_signatures = robust_sigs.to_list()
+            
+            
+    def DriverGenes(self, num_genes=10):
+        print("************************************************************")
+        print("Finding Driver Genes")
+        
+        ## TODO: ADD CONDITION TO CHECK IF DIFFERENTIAL EXPRESSION HAS ALREADY BEEN RUN
+#         if not self.de_summary:
+#             print("Run DifferentialExpression() first")
+#             print("************************************************************")
+#             return
+        
+        self.num_driver_genes=num_genes
+        
+        for x in tqdm(self.signatures.columns):
+            if self.de_summary.loc[x,"direction"]==self.treatment_group_names[0]:
+                self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all, num_genes)
+            else:
+                self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d2_all, self.d1_all, num_genes)
+        print("************************************************************")
+
     
     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
                                                  subsamples=501, **kwargs):
@@ -386,6 +401,7 @@ class Beanie:
         df_plot = df_plot.loc[df_plot.corrected_p<0.05,:]
         df_plot["log_corrected_p"] = -np.log(df_plot["corrected_p"])
         df_plot["log_corrected_p"] = [df_plot["log_corrected_p"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrected_p"][count] for count in range(0,df_plot.shape[0])]
+        df_plot = df_plot.sort_values(by=["log_corrected_p"],axis=0)
         plt.rcParams['hatch.color'] = '#FFFFFF'
         size = df_plot.shape[0]
         fig, axs = plt.subplots(figsize=(max(size/4,5),5))
@@ -424,7 +440,7 @@ class Beanie:
         """
         
         non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corrected_p<=0.05)]
-        non_robust_sig_plot = non_robust_sig.iloc[:,6:(non_robust_sig.shape[1]-1)]
+        non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
         
         size=non_robust_sig_plot.shape[0]
         
@@ -457,7 +473,7 @@ class Beanie:
         
         """
         non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corrected_p<=0.05)]
-        non_robust_sig_plot = non_robust_sig.iloc[:,6:(non_robust_sig.shape[1]-1)]
+        non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
         non_robust_sig_plot.columns = [x.split("_")[1] for x in non_robust_sig_plot.columns]
         
         size=non_robust_sig_plot.shape[0]
@@ -514,7 +530,7 @@ class Beanie:
                 texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center') for j in range(len(pats))])
             ax_xDist.set_ylim(bottom=-0.5)
             adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-        ax_xDist.set_xticks([])
+#         ax_xDist.set_xticks([])
         ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
         ax_xDist.set_ylabel("Fold Rejection Ratio");
 
