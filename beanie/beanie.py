@@ -15,6 +15,8 @@ from adjustText import adjust_text
 from itertools import product
 from statsmodels.stats.multitest import multipletests
 
+import scanpy as sc
+
 from . import driver_genes as dg
 from . import differential_expression as de
 
@@ -23,12 +25,14 @@ from .utils import *
 
 class Beanie:
     
-    def __init__(self, counts_path: str, metad_path: str, sig_path = None, sig_score_path =None, **kwargs):
+    def __init__(self, counts_path: str, metad_path: str, normalised: bool, test_direction: str, sig_path = None, sig_score_path = None, subsample_mode = "equal", **kwargs):
         """
         
         Parameters:
             counts_path                       path to the normalised counts_matrix file
             metad_path                        path to the metadata file
+            normalised
+            test_direction
             sig_path                          path to the signature file containing
             sig_db                            arguments for extracting information from msigdb. In this case, sig_path will not be needed
             sig_score_path                    path to signature_scores
@@ -63,8 +67,10 @@ class Beanie:
             self.t1_cells
             self.t2_cells
             self.patient_dropout_plot
-            self.group_direction              direction of interest where enrichment should be seen; default group1
+            self.group_direction              direction of interest where enrichment should be seen
             self.__candidate_robust_sigs_df
+            self.subsample_mode               variable to decide whether smart-seq or 10x subsampling should be done
+            
         """
         
         # Read counts matrix
@@ -73,10 +79,14 @@ class Beanie:
             print("Reading counts matrix...")
             if counts_path.endswith(".csv"):
                 self.counts = pd.read_csv(counts_path, index_col=0, sep=",")
-#                 self.normalised_counts = CPMNormalisationLogScaling(self.counts)
             elif counts_path.endswith(".tsv"):
                 self.counts = pd.read_csv(counts_path, index_col=0, sep="\t")
-#                 self.normalised_counts = CPMNormalisationLogScaling(self.counts)
+            elif counts_path.endswith(".h5ad"):
+                sc_obj = sc.read(counts_path)
+                if sc_obj.raw==None:
+                    self.counts = pd.DataFrame(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
+                else:
+                    self.counts = pd.DataFrame(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
             else:
                 print("Counts matrix should be of the format .csv or .tsv")
                 return
@@ -108,6 +118,7 @@ class Beanie:
             return
         
         # Check if metadata file is in the correct format
+        
         # check if the header has correct columns needed.
         if np.sum(self.metad.columns.isin(['treatment_group','patient_id']))!=2:
             print("Please check input format for meta data file. 'treatment_group','patient_id' columns should be present.")
@@ -115,13 +126,22 @@ class Beanie:
 
         # check that number of treatment groups are 2
         self.treatment_group_names = sorted(set(self.metad.treatment_group))
+                
         if len(self.treatment_group_names)<2:
             print("Atleast two treatment groups required.")
             return
         elif len(self.treatment_group_names)>2:
             print("The method is not currently supported for more than two treatment groups.")
             return
-
+        else:
+            if test_direction not in self.treatment_group_names:
+                print("Check input parameter test_direction")
+                return 
+            else:
+                self.group_direction = test_direction
+                if test_direction!=self.treatment_group_names[0]:
+                    self.treatment_group_names.reverse()
+                
         # check if cell ids in self.normalised_counts and self.metad match
         if set(self.counts.columns) != set(self.metad.index):
             print("The cell ids in counts matrix and meta data file should match.")
@@ -191,9 +211,8 @@ class Beanie:
         self.de_summary_simulation = list()
         self.top_signatures=None
         self.num_driver_genes=10
-        self.patient_dropout_plot=None
-        self.group_direction = self.treatment_group_names[0]
-                        
+        self.patient_dropout_plot=None  
+        self.subsample_mode = subsample_mode
         
         self.t1_ids = list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[0]].patient_id))
         self.t2_ids = list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[1]].patient_id))
@@ -209,11 +228,14 @@ class Beanie:
         self.t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
         self.t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()    
         
-        self.normalised_counts = CPMNormalisationLogScaling(self.counts)
-        # TODO: calculate max subsample size
-        self.max_subsample_size = 85
+        if normalised==False:
+            self.normalised_counts = CPMNormalisationLogScaling(self.counts)
+        else:
+            self.normalised_counts = self.counts
+        self.max_subsample_size = CalculateSubsampleSize(self.metad, self.treatment_group_names, self.subsample_mode)
         
         print("************************************************************")
+        
         
     def SignatureScoring(self, scoring_method="mean"):
         """ 
@@ -224,12 +246,17 @@ class Beanie:
         
         """
         
+        
+        ## TODO: add check if signature_scores already exists
+        
         if scoring_method=="znorm":
             self.signature_scores = SignatureScoringZNormalised(self.normalised_counts, self.signatures, multiprocessing.cpu_count())
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
+        elif scoring_method=="combined-z":
+            self.signature_scores = SignatureScoringCombinedZScore(self.normalised_counts,self.signatures)
         else:
-            print("Please choose scoring method from: 'vision', 'mean'.")
+            print("Please choose scoring method from: 'znorm', 'mean', 'combined-z'.")
             return
 
         
@@ -256,7 +283,7 @@ class Beanie:
             cells_to_subsample_2 = self.max_subsample_size
         
         self.de_obj = de.ExcludeSampleSubsampledDE(self.signature_scores.T, 
-                                               self.d1_all, self.d2_all, 
+                                               self.d1_all, self.d2_all, self.subsample_mode,
                                                group1_sample_cells=cells_to_subsample_1, 
                                                group2_sample_cells=cells_to_subsample_2,
                                                samples_per_fold=subsamples,**kwargs)
@@ -280,6 +307,8 @@ class Beanie:
         else:
             self.top_signatures = robust_sigs.to_list()
             
+    def GetDifferentialExpressionSummary():
+        return self.de_summary
             
     def DriverGenes(self, num_genes=10):
         print("************************************************************")
@@ -294,12 +323,33 @@ class Beanie:
         self.num_driver_genes=num_genes
         
         for x in tqdm(self.signatures.columns):
-            if self.de_summary.loc[x,"direction"]==self.treatment_group_names[0]:
+            if self.de_summary.loc[x,"direction"]==self.group_direction:
                 self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all, num_genes)
             else:
                 self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d2_all, self.d1_all, num_genes)
         print("************************************************************")
 
+    def GetDriverGenesSummary(self):
+        
+        if len(self.driver_genes)==0:
+            print("Run DriverGenes() method first.")
+            pass
+        elif self.de_summary==None:
+            print("Run DifferentialExpression() method first.")
+            pass
+        
+        tup = []
+        for k in self.driver_genes.keys():
+            try:
+                v = self.driver_genes[k].index
+                for gene in v:
+                    tup.append((k,self.de_summary.loc[k,"direction"],gene))
+            except AttributeError:
+                pass
+            
+        return pd.DataFrame(pd.concat(self.driver_genes.values()).values, index = pd.MultiIndex.from_tuples(tup), 
+             columns = ["log2fold","std_error","direction","robustness_ratio"])
+        
     
     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
                                                  subsamples=501, **kwargs):
@@ -319,15 +369,14 @@ class Beanie:
             print("Simulation has already been run.")
             return
         
-        # TODO: define max possible iterations with help of self.max_subsample_size
-        max_iter = 16
+        step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
         
         for i in tqdm(range(0,max_iter)):
             self.de_obj_simulation.append(de.ExcludeSampleSubsampledDE(self.signature_scores.T, 
-                                                           self.d1_all, self.d2_all,  
-                                                           group1_sample_cells=10+5*i, 
-                                                           group2_sample_cells=10+5*i, 
-                                                           samples_per_fold=subsamples,**kwargs))
+                                                           self.d1_all, self.d2_all, self.subsample_mode, 
+                                                           group1_sample_cells=10+step_size*i, 
+                                                           group2_sample_cells=10+step_size*i, 
+                                                           samples_per_fold=subsamples, **kwargs))
             self.de_obj_simulation[i].run()
             self.de_summary_simulation.append(self.de_obj_simulation[i].summarize(alpha, min_ratio))
             
@@ -360,9 +409,9 @@ class Beanie:
         
         fig, axs = plt.subplots(figsize=(len(conf_list)/2,5))
 
-        # TODO: update the labels for this plot after final formula for x axis decided
+        step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
 
-        bp = axs.boxplot(boxplot_df,labels=[10+5*i for i in range(0,len(conf_list))],patch_artist=True);
+        bp = axs.boxplot(boxplot_df,labels=[10+step_size*i for i in range(0,len(conf_list))],patch_artist=True);
 
         for box in bp['boxes']:
             box.set(color='#FB91A4', linewidth=2)
@@ -402,8 +451,9 @@ class Beanie:
         df_plot["log_corrected_p"] = -np.log(df_plot["corrected_p"])
         df_plot["log_corrected_p"] = [df_plot["log_corrected_p"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrected_p"][count] for count in range(0,df_plot.shape[0])]
         df_plot = df_plot.sort_values(by=["log_corrected_p"],axis=0)
-        plt.rcParams['hatch.color'] = '#FFFFFF'
         size = df_plot.shape[0]
+
+        plt.rcParams['hatch.color'] = '#FFFFFF'
         fig, axs = plt.subplots(figsize=(max(size/4,5),5))
         bar = sns.barplot(x =df_plot.index ,y= "log_corrected_p", data=df_plot, color="#6CC9B6")
         for i,thisbar in enumerate(bar.patches):
@@ -431,41 +481,6 @@ class Beanie:
         self.barplot = fig
         return
 
-
-    def BeeSwarmPlot(self):
-        """
-        Function for plotting the fold rejection ratio for each signature. It labels the patients which are outliers, 
-        and may have led to the signature being non-robust despite having a significant p-val.
-        
-        """
-        
-        non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corrected_p<=0.05)]
-        non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
-        
-        size=non_robust_sig_plot.shape[0]
-        
-        fig, axs = plt.subplots(figsize=(max(size/2,5),5))
-
-        sns.boxplot(data=non_robust_sig_plot.T, color="#6CC9B6",showfliers=True,ax=axs)
-
-        # Label the outliers
-        q25 = non_robust_sig_plot.T.quantile(0.25).to_numpy()
-        q75 = non_robust_sig_plot.T.quantile(0.75).to_numpy()
-        outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
-        texts = []
-        for i in range(non_robust_sig_plot.shape[0]):
-            fr_ratio = non_robust_sig_plot.iloc[i,:]
-            pats = [x.split("_")[1] for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
-            texts.extend([plt.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center') for j in range(len(pats))])
-
-        axs.set_title("Non-robust statistically significant signatures")
-        axs.set_ylabel("Fold Rejection Ratio")
-        plt.xticks(rotation=90);
-        axs.set_ylim(bottom=-0.2)
-        adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-        self.beeswarmplot = fig
-
-        return
     
     def PatientDropoutPlot(self, annotate=True):
         """
@@ -474,7 +489,7 @@ class Beanie:
         """
         non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corrected_p<=0.05)]
         non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
-        non_robust_sig_plot.columns = [x.split("_")[1] for x in non_robust_sig_plot.columns]
+        non_robust_sig_plot.columns = [x[9:] for x in non_robust_sig_plot.columns]
         
         size=non_robust_sig_plot.shape[0]
         
@@ -498,42 +513,50 @@ class Beanie:
 
         df_main = non_robust_sig_plot.loc[mat.index,mat.columns]
         
-        fig = plt.figure(figsize=(15,10))
-        gs = GridSpec(4,4)
-        gs.update(wspace=0.015, hspace=0.05)
-        
-        ax_main = plt.subplot(gs[1:4, :3])
-        ax_main.imshow(mat.T, cmap="RdPu",interpolation="nearest",aspect="auto",vmin=0, vmax=1.5, alpha=0.5)
-        # ax_main.grid(color='#E8D5DE', linestyle='-', linewidth=1)
-        ax_main.set_yticks(range(0,mat.T.shape[0]))
-        ax_main.set_yticklabels(mat.T.index.to_list());
-        ax_main.set_xticks(range(0,mat.T.shape[1]))
-        ax_main.set_xticklabels(mat.T.columns.to_list(), rotation=90);
-        
-        ax_yDist = plt.subplot(gs[1:4, 3], sharey=ax_main)
-        ax_yDist.barh(range(mat.shape[1]),mat.T.sum(axis=1),color="#FED298")
-        ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
-        ax_yDist.set_xlabel("Frequency");
-        ax_yDist.set_xlim([0,mat.T.shape[1]]);
-        
-        ax_xDist = plt.subplot(gs[0:1, :3], sharex=ax_main)
-        sns.boxplot(data=df_main.T, color="#6CC9B6",ax=ax_xDist)
-        if annotate:
-            q25 = df_main.T.quantile(0.25).to_numpy()
-            q75 = df_main.T.quantile(0.75).to_numpy()
-            outlier_top_lim = q75 + 1.5 * (q75 - q25)
-            outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
-            texts = []
-            for i in range(df_main.shape[0]):
-                fr_ratio = df_main.iloc[i,:]
-                pats = [x for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
-                texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center') for j in range(len(pats))])
-            ax_xDist.set_ylim(bottom=-0.5)
-            adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-#         ax_xDist.set_xticks([])
-        ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
-        ax_xDist.set_ylabel("Fold Rejection Ratio");
+        with sns.plotting_context("notebook", rc={'axes.titlesize' : 12,
+                                           'axes.labelsize' : 10,
+                                           'xtick.labelsize' : 10,
+                                           'ytick.labelsize' : 8,
+                                           'font.name' : u'Arial'}):
+            fig = plt.figure(figsize=(15,10),dpi=300)
+            gs = GridSpec(4,4)
+            gs.update(wspace=0.015, hspace=0.05)
+            ax_main = plt.subplot(gs[1:4, :3])
+            ax_yDist = plt.subplot(gs[1:4, 3], sharey=ax_main)
+            ax_xDist = plt.subplot(gs[0:1, :3])
 
+            sns.boxplot(data=df_main.T, color="#6CC9B6",ax=ax_xDist)
+            ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
+            ax_xDist.set_ylabel("Fold Rejection Ratio");
+            ax_xDist.set_ylim(bottom=-0.5)
+
+            heatmap = sns.heatmap(mat.T, cmap="RdPu",ax=ax_main, cbar=False, vmin=0,vmax=2.0, linewidths=0.5, linecolor="#F7DD8B")
+            ax_main.set_yticks([])
+            ax_main.set_yticks(np.arange(mat.T.shape[0])+0.5)
+            ax_main.set_yticklabels(mat.T.index.to_list());
+            ax_main.set_xticks(np.arange(mat.T.shape[1])+0.5)
+            ax_main.set_xticklabels(mat.T.columns.to_list(), rotation=90);
+            for _, spine in heatmap.spines.items():
+                spine.set_visible(True)
+
+            ax_yDist.barh(np.arange(mat.shape[1])+0.5,mat.T.sum(axis=1),color="#FED298")
+            ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
+            ax_yDist.set_xlabel("#dropouts/patient");
+            ax_yDist.set_xlim([0,mat.T.shape[1]]);
+
+            if annotate==True:
+                q25 = df_main.T.quantile(0.25).to_numpy()
+                q75 = df_main.T.quantile(0.75).to_numpy()
+                outlier_top_lim = q75 + 1.5 * (q75 - q25)
+                outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
+                texts = []
+                for i in range(df_main.shape[0]):
+                    fr_ratio = df_main.iloc[i,:]
+                    pats = [x for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
+                    texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center',fontsize=9) for j in range(len(pats))])
+
+                adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
+            
         self.patient_dropout_plot = fig
         return
 
@@ -577,10 +600,13 @@ class Beanie:
         
         upset_df_prep = pd.DataFrame(columns=self.driver_genes.keys())
         for x in self.driver_genes.keys():
-            a = self.driver_genes[x].index.to_list()
-            a += [None] * (self.num_driver_genes - len(a))
-            upset_df_prep[x] = a
-            
+            try:
+                a = self.driver_genes[x].index.to_list()
+                a += [None] * (self.num_driver_genes - len(a))
+                upset_df_prep[x] = a
+            except AttributeError:
+                pass
+
         upset_df = pd.DataFrame(list(product([True,False],repeat = len(signature_names))),columns=signature_names)
         intersection = list()
         for i in range(upset_df.shape[0]):

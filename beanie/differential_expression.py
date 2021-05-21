@@ -132,7 +132,7 @@ class StandAloneDEIterationGroup(DEIterationGroup):
 
 class ExcludeSampleFold(DEIterationGroup):
 
-    def __init__(self, expression: pd.DataFrame, group1_cells: dict, group2_cells: dict,
+    def __init__(self, expression: pd.DataFrame, group1_cells: dict, group2_cells: dict, subsample_mode:str,
                  group1_sample_cells: int, group2_sample_cells: int, n_subsamples: int,
                  excluded_cells: int, excluded_from_group1: bool, name: str,
                  mwu_alternative='two-sided'):
@@ -162,6 +162,7 @@ class ExcludeSampleFold(DEIterationGroup):
         self.group2_sample_cells = group2_sample_cells
         self.excluded_cells = excluded_cells
         self.excluded_from_group1 = excluded_from_group1
+        self.subsample_mode = subsample_mode
 
         self.choose_cells()
 
@@ -196,16 +197,21 @@ class ExcludeSampleFold(DEIterationGroup):
             replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
             replacement_weights /= replacement_weights.sum()
             replacement_candidates = np.hstack(replacement_candidates)
-            already_chosen.extend(np.random.choice(replacement_candidates,
+            if self.subsample_mode=="max":
+                already_chosen.extend(np.random.choice(replacement_candidates,
                                                    size=replacements_needed,
                                                    replace=False,
                                                    p=replacement_weights))
+            else:
+                already_chosen.extend(np.random.choice(replacement_candidates,
+                                                   size=replacements_needed,
+                                                   replace=False))
 
             self.cells_chosen.append((group1, group2))
 
 
 class ExcludeSampleSubsampledDE:
-    def __init__(self, full_expression: pd.DataFrame, group1_cells: dict, group2_cells: dict,
+    def __init__(self, full_expression: pd.DataFrame, group1_cells: dict, group2_cells: dict, subsample_mode: str,
                  group1_sample_cells=20, group2_sample_cells=20, samples_per_fold=501,
                  min_expressing_samples=0, min_frac_per_sample=0, min_expression=0,
                  mwu_alternative='two-sided', random_state=42):
@@ -249,6 +255,7 @@ class ExcludeSampleSubsampledDE:
             self.folds.append(ExcludeSampleFold(self.expression,
                                                 {x: y for x, y in group1_cells.items() if x != excluded},
                                                 {x: y for x, y in group2_cells.items() if x != excluded},
+                                                subsample_mode,
                                                 group1_sample_cells,
                                                 group2_sample_cells,
                                                 samples_per_fold,
