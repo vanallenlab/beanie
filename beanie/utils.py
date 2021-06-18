@@ -1,5 +1,8 @@
 from tqdm.auto import tqdm
 
+import os
+from datetime import datetime
+
 import random
 import multiprocessing
 
@@ -10,6 +13,7 @@ from math import sqrt
 
 from rpy2.robjects.packages import importr
 
+from .differential_expression import table_mannwhitneyu
 
 def CPMNormalisationLogScaling(counts,**kwargs):
     """
@@ -27,7 +31,80 @@ def CPMNormalisationLogScaling(counts,**kwargs):
     
     return df
     
+
+def GenerateNullDistributionSignatures(signature,all_genes,no_iters=200):    
+    """Generate sets of random signatures of variable sizes"""
     
+    print("Generating background distribution of random signatures...")
+    size_dict = {}
+    for x in signature.columns:
+        size = round(len(signature[x].dropna())/5)*5
+        if size not in size_dict.keys():
+            size_dict[size]=[x]
+        else:
+            size_dict[size].append(x)
+            
+    random_set_dict = {}
+    for key in size_dict.keys():
+        random_set_dict[key] = [random.sample(all_genes,key) for i in range(no_iters)]
+    
+    print("Storing temp random sig files in directory...")
+    dateTimeObj = datetime.now()
+    dir_name = "temp_files_"+dateTimeObj.strftime("%d_%b_%Y_%H_%M_%S_%f")
+    os.mkdir(dir_name)
+    for key in size_dict.keys():
+        pd.DataFrame(random_set_dict[key], index=["random_sig_"+str(i) for i in range(no_iters)]).to_csv("./" + dir_name + "/" + str(key) + ".gmt", sep="\t", header=None)
+        
+    return random_set_dict,dir_name
+
+def DownSampleCellsForPValCorrection(d:dict, t_cells:list, subsample_per_pat:int , no_subsample_cells:int, subsample_mode="max"):
+    
+    group = []
+    for cells in d.values():
+        group.extend(np.random.choice(cells, size=min(subsample_per_pat, len(cells)), replace=False))
+
+    # make up for cells that would have been sampled from excluded sample
+    replacements_needed = no_subsample_cells - len(group)
+    
+    if replacements_needed!=0:
+        replacement_group = d
+        already_chosen = group
+        replacement_candidates = []
+        for sample_cells in replacement_group.values():
+            replacement_candidates.append(sorted(set(sample_cells)))
+
+        # weight for ~equal representation of samples
+        replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
+        replacement_weights /= replacement_weights.sum()
+        replacement_candidates = np.hstack(replacement_candidates)
+        if subsample_mode=="max":
+            already_chosen.extend(np.random.choice(replacement_candidates,
+                                               size=replacements_needed,
+                                               replace=False,
+                                               p=replacement_weights))
+        else:
+            already_chosen.extend(np.random.choice(replacement_candidates,
+                                               size=replacements_needed,
+                                               replace=False))
+
+    return group
+    
+def PValCorrectionPermutationTest(expression, t1_cells, t2_cells,  
+                                  U_uncorrected: pd.Series, p_uncorrected: pd.Series, alternative="two-sided"):
+    """Find the corrected pval based on mann whitney test.
+    
+    Parameters:
+        expression                             (cells x signatures) matrix
+        t1_cells
+        t2_cells
+    
+    """
+    U, p = table_mannwhitneyu(expression.T, t1_cells, t2_cells, alternative)
+    p_corr_U = min(len(U[U>U_uncorrected])/len(U),len(U[U<U_uncorrected])/len(U))
+    p_corr_p = min(len(p[p>p_uncorrected])/len(p),len(p[p<p_uncorrected])/len(p))
+    return p_corr_U, p_corr_p
+
+        
 def SignatureScoringZNormalisedHelper(counts, signature):
     """
     Helper function for SignatureScoringZNormalised()
@@ -136,13 +213,23 @@ def GetSignaturesMsigDb(msigdb_species,msigdb_category,msigdb_subcategory=None):
     m_df = pd.DataFrame(list(m_df.groupby('gs_name')["gene_symbol"].unique()), index=m_df.groupby(['gs_name']).groups.keys()).T
     return m_df
 
-def OutlierDetector(a):
+def OutlierDetector(a:dict):
     a_vals = list(a.values())
     q25 = np.quantile(a_vals,0.25)
     q75 = np.quantile(a_vals,0.75)
     outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
     outlier_upper_lim = q75 + 1.5 * (q75 - q25)
     if (a_vals>outlier_upper_lim).sum()>0 or (a_vals<outlier_bottom_lim).sum()>0:
+        return True
+    else:
+        return False
+
+def OutlierDetectorFold(a:list):
+    q25 = np.quantile(a,0.25)
+    q75 = np.quantile(a,0.75)
+    outlier_bottom_lim = q25 - 1.5 * (q75 - q25)
+    outlier_upper_lim = q75 + 1.5 * (q75 - q25)
+    if (a>outlier_upper_lim).sum()>0 or (a<outlier_bottom_lim).sum()>0:
         return True
     else:
         return False
@@ -194,12 +281,14 @@ def CalculateLog2FoldChange(signature_genes,counts_matrix,d1,d2):
                 a2_temp = {key: value for key, value in a2.items() if key != fold}
                 fold_list.append(CalculateLog2FoldChangeHelper(a1,a2_temp))
             
-            log2fold = np.mean([x[0] for x in fold_list]) 
+            log2fold = np.mean([x[0] for x in fold_list])
+            log2fold_outlier = OutlierDetectorFold([x[0] for x in fold_list])
             std_err = sem([x[0] for x in fold_list])
             dirs = [x[1] for x in fold_list]
             direction = max(dirs, key = dirs.count)
             robustness_ratio = dirs.count(direction)/len(dirs)
-            test_coeff.append([gene,gr1_outlier,gr2_outlier,log2fold,std_err,direction,robustness_ratio])    
+            test_coeff.append([gene, gr1_outlier, gr2_outlier, log2fold, log2fold_outlier,
+                               std_err, direction, robustness_ratio])    
             
     return test_coeff
 
@@ -332,7 +421,7 @@ def CalculateMaxIterations(max_subsample_size, **kwargs):
     max_size = max_subsample_size
     flag=True
     step_size=5
-    max_num_iters=20
+    max_num_iters=15
     
     while flag:
         temp=(max_size-min_size)/step_size
@@ -343,7 +432,3 @@ def CalculateMaxIterations(max_subsample_size, **kwargs):
             
     num_iters = temp
     return step_size, num_iters
-
-
-    
-    

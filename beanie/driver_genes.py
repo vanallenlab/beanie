@@ -9,27 +9,29 @@ import seaborn as sns
 
 from .utils import CalculateLog2FoldChange, OutlierDetector
 
-def FindTopGenes(coeff_matrix, no_of_genes:int):
+def FindTopGenes(coeff_matrix):
 #     correction_method = "bonferroni"
     
-    if no_of_genes>len(coeff_matrix):
-        no_of_genes = len(coeff_matrix)
+#     if no_of_genes>len(coeff_matrix):
+#         no_of_genes = len(coeff_matrix)
     df = pd.DataFrame(coeff_matrix, columns=["gene_name","gr1_outlier","gr2_outlier",
-                                             "log2fold","std_error","direction","robustness_ratio"])
+                                             "log2fold","log2fold_outlier","std_error","direction","robustness_ratio"])
     df = df.set_index("gene_name")
 
     # select only significant genes
-    df = df[(df.log2fold>=0.5) & (df.robustness_ratio>=0.9) & (df.gr1_outlier==False) & (df.gr2_outlier==False)]
+    df = df[(df.log2fold>=0.5) & (df.robustness_ratio>=0.9)]
     gr = df.groupby("direction").groups
     try:
-        df = df.loc[gr[True],].sort_values(["robustness_ratio","log2fold"],ascending=(False,False))
-        return df.iloc[:min(no_of_genes,df.shape[0]),:]
+        df = df.loc[gr[True],].sort_values(["log2fold_outlier", "gr1_outlier", "gr2_outlier", 
+                                            "log2fold", "std_error", "robustness_ratio"],
+                                           ascending=(True, True, True, False, True, False))
+        return df
     except KeyError:
         # case when there is no gene in the signature enriched in the direction of interest...
         return None
 
 
-def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_genes, d1, d2, no_of_genes=10):
+def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_genes, d1, d2):
     """ Perform correlation test to find genes which are correlated to the signature score.
     
     Parameters:
@@ -45,9 +47,8 @@ def FindDriverGenes(signature_name, signature_matrix, counts_matrix, signature_g
     if not signature_matrix.index.equals(counts_matrix.index):
         pass
 
-    results_list = CalculateLog2FoldChange(signature_genes,counts_matrix,d1,d2)
-            
-    top_genes = FindTopGenes(results_list, no_of_genes)
+    results_list = CalculateLog2FoldChange(signature_genes,counts_matrix,d1,d2)       
+    top_genes = FindTopGenes(results_list)
     return top_genes
 
 
@@ -106,7 +107,7 @@ def GenerateHeatmapFigure(df1_list, df2_list, signature_list, **kwargs):
         plt.subplots_adjust(hspace = 0.05, wspace = 0.01, left=0, right=0.9, top=0.95, bottom=0)
         return
 
-def GenerateHeatmap(counts_matrix, t1_ids, t2_ids, d1, d2, top_genes:dict, signature_list:list, **kwargs):
+def GenerateHeatmap(counts_matrix, t1_ids, t2_ids, d1, d2, top_genes:dict, signature_list:list, no_genes=10, **kwargs):
     """Function to prepare data for GenerateHeatmapFigure()
     
     Parameters: 
@@ -135,6 +136,7 @@ def GenerateHeatmap(counts_matrix, t1_ids, t2_ids, d1, d2, top_genes:dict, signa
     for sig_name in signature_list:
         try:
             gene_names = top_genes[sig_name].index.to_list()
+            gene_names = gene_names[:min(no_genes,len(gene_names))]
             sig_list_robust.append(sig_name)
         except AttributeError:
             print("Signature " + sig_name + " does not have a robust gene differential.")
