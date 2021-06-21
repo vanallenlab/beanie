@@ -32,10 +32,15 @@ def CPMNormalisationLogScaling(counts,**kwargs):
     return df
     
 
-def GenerateNullDistributionSignatures(signature,all_genes,no_iters=200):    
+def GenerateNullDistributionSignatures(signature,sorted_genes,no_iters=200):    
     """Generate sets of random signatures of variable sizes"""
     
     print("Generating background distribution of random signatures...")
+    q20 = np.quantile(sorted_genes,0.20)
+    q40 = np.quantile(sorted_genes,0.40)
+    q60 = np.quantile(sorted_genes,0.60)
+    q80 = np.quantile(sorted_genes,0.80)
+    
     size_dict = {}
     for x in signature.columns:
         size = round(len(signature[x].dropna())/5)*5
@@ -46,7 +51,7 @@ def GenerateNullDistributionSignatures(signature,all_genes,no_iters=200):
             
     random_set_dict = {}
     for key in size_dict.keys():
-        random_set_dict[key] = [random.sample(all_genes,key) for i in range(no_iters)]
+        random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>q20) & (sorted_genes<q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>q40) & (sorted_genes<q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>q60) & (sorted_genes<q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes>q80].index.to_list(),int(key/5)) for i in range(no_iters)]
     
     print("Storing temp random sig files in directory...")
     dateTimeObj = datetime.now()
@@ -432,3 +437,7 @@ def CalculateMaxIterations(max_subsample_size, **kwargs):
             
     num_iters = temp
     return step_size, num_iters
+
+
+    
+    

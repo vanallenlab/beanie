@@ -307,7 +307,8 @@ class Beanie:
         print("Scoring signatures...")
              
         # Score background signatures
-        self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, self.normalised_counts.index.to_list(),no_random_sigs)
+        sorted_genes = pd.Series.sort_values(obj.normalised_counts.sum(axis=1))
+        self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, sorted_genes, no_random_sigs)
         self._null_dist_scores = dict()
         
         if scoring_method=="beanie":
