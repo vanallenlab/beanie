@@ -86,10 +86,9 @@ class Beanie:
         
         if not os.path.exists(metad_path):
             raise FileNotFoundError("Meta data file does not exist. Please check metad_path.")
-        
-        if sig_path!=None:
-            if not os.path.exists(sig_path):
-                raise FileNotFoundError("Signature file does not exist. Please check sig_path.")
+
+        if not os.path.exists(sig_path):
+            raise FileNotFoundError("Signature file does not exist. Please check sig_path.")
                 
         if sig_score_path!=None:
             if not os.path.exists(sig_score_path):
@@ -149,35 +148,31 @@ class Beanie:
         if set(self.counts.columns) != set(self.metad.index):
             raise IOError("The cell ids in counts matrix and meta data file should match.")
         
-        if sig_path!= None:
-            print("Reading signature file...")
-            if sig_path.endswith(".csv"):
-                self.signatures = pd.read_csv(sig_path, index_col=0, sep=",")
-                self._writeSignatures()
-            elif sig_path.endswith(".tsv"):
-                self.signatures = pd.read_csv(sig_path, index_col=0, sep="\t")
-                self._writeSignatures()
-            elif sig_path.endswith(".gmt"):
-                self._sig_path=sig_path
-                with open(sig_path) as gmt:
-                    ll = gmt.read()
-                ll_sigs = ll.split("\n")
-                if "" in ll_sigs:
-                    ll_sigs.remove("")
-                li = []
-                for x in ll_sigs:
-                    genes = x.split("\t")
-                    li.append([i for i in genes if i])
-                self.signatures = pd.DataFrame(li).T
-                self.signatures.columns = self.signatures.iloc[0,:]
-                self.signatures = self.signatures.iloc[1:,]
-                self.signatures.index=range(len(self.signatures.index))    
-            else:
-                raise IOError("Signature file should be of the format .csv or .tsv or .gmt")
-
-        # If signatures have to be extracted from MsigDb
+        # Read signature file
+        print("Reading signature file...")
+        if sig_path.endswith(".csv"):
+            self.signatures = pd.read_csv(sig_path, index_col=0, sep=",")
+            self._writeSignatures()
+        elif sig_path.endswith(".tsv"):
+            self.signatures = pd.read_csv(sig_path, index_col=0, sep="\t")
+            self._writeSignatures()
+        elif sig_path.endswith(".gmt"):
+            self._sig_path=sig_path
+            with open(sig_path) as gmt:
+                ll = gmt.read()
+            ll_sigs = ll.split("\n")
+            if "" in ll_sigs:
+                ll_sigs.remove("")
+            li = []
+            for x in ll_sigs:
+                genes = x.split("\t")
+                li.append([i for i in genes if i])
+            self.signatures = pd.DataFrame(li).T
+            self.signatures.columns = self.signatures.iloc[0,:]
+            self.signatures = self.signatures.iloc[1:,]
+            self.signatures.index=range(len(self.signatures.index))    
         else:
-            self._sig_path=None
+            raise IOError("Signature file should be of the format .csv or .tsv or .gmt")
                 
 
         # Read signature scores file
@@ -264,23 +259,23 @@ class Beanie:
         
         return
     
-    def GetSignatures(self,**kwargs):
-        """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
+#     def GetSignatures(self,**kwargs):
+#         """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
         
-        Parameters: 
-            msigdb_species                           species for msigdb
-            msigdb_category                          categories: chosen from H,C1,...C8
-            msigdb_subcategory                       (optional) if present, for eg in case of C2.
+#         Parameters: 
+#             msigdb_species                           species for msigdb
+#             msigdb_category                          categories: chosen from H,C1,...C8
+#             msigdb_subcategory                       (optional) if present, for eg in case of C2.
         
-        """
+#         """
         
-        if self._sig_path!=None:
-            raise RuntimeError("A signature file has already been provided.")
+#         if self._sig_path!=None:
+#             raise RuntimeError("A signature file has already been provided.")
             
-        self.signatures = GetSignaturesMsigDb(**kwargs)
-        self._writeSignatures()
+#         self.signatures = GetSignaturesMsigDb(**kwargs)
+#         self._writeSignatures()
         
-        return
+#         return
 
         
     def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):

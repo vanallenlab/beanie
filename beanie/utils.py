@@ -11,7 +11,7 @@ import numpy as np
 from scipy.stats import zscore, sem
 from math import sqrt
 
-from rpy2.robjects.packages import importr
+# from rpy2.robjects.packages import importr
 
 from .differential_expression import table_mannwhitneyu
 
@@ -192,31 +192,31 @@ def SignatureScoringMean(counts, signatures):
     
     return score_df
     
-def GetSignaturesMsigDb(msigdb_species,msigdb_category,msigdb_subcategory=None):
-    """
-    Function to interface with msigdb (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp) 
-    and extract pathways/signatures. Alternative to providing a user defined signature file.
-    Uses R package msigdb for interface.
-    thought - can I remove dependence from this package?
+# def GetSignaturesMsigDb(msigdb_species,msigdb_category,msigdb_subcategory=None):
+#     """
+#     Function to interface with msigdb (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp) 
+#     and extract pathways/signatures. Alternative to providing a user defined signature file.
+#     Uses R package msigdb for interface.
+#     thought - can I remove dependence from this package?
     
-    Parameters:
-        msigdb_species                              species for msigdb
-        msigdb_category                             categories: chosen from H,C1,...C8
-        msigdb_subcategory                          if present, for eg in case of C2.
+#     Parameters:
+#         msigdb_species                              species for msigdb
+#         msigdb_category                             categories: chosen from H,C1,...C8
+#         msigdb_subcategory                          if present, for eg in case of C2.
     
-    """
-    print("Extracting signatures from MsigDB: http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp")
-    msig = importr("msigdbr")
-    if msigdb_subcategory ==None:
-        r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category)
-    else:
-        r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category, subcategory=msigdb_subcategory)
+#     """
+#     print("Extracting signatures from MsigDB: http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp")
+#     msig = importr("msigdbr")
+#     if msigdb_subcategory ==None:
+#         r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category)
+#     else:
+#         r_df = msig.msigdbr(species = msigdb_species, category=msigdb_category, subcategory=msigdb_subcategory)
 
-    pd_df = pd.DataFrame(r_df,index=r_df.colnames).T
-    m_df = pd_df[["gs_name","gene_symbol"]]
-    temp = m_df.groupby(['gs_name']).groups.keys()
-    m_df = pd.DataFrame(list(m_df.groupby('gs_name')["gene_symbol"].unique()), index=m_df.groupby(['gs_name']).groups.keys()).T
-    return m_df
+#     pd_df = pd.DataFrame(r_df,index=r_df.colnames).T
+#     m_df = pd_df[["gs_name","gene_symbol"]]
+#     temp = m_df.groupby(['gs_name']).groups.keys()
+#     m_df = pd.DataFrame(list(m_df.groupby('gs_name')["gene_symbol"].unique()), index=m_df.groupby(['gs_name']).groups.keys()).T
+#     return m_df
 
 def OutlierDetector(a:dict):
     a_vals = list(a.values())
