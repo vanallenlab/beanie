@@ -24,7 +24,7 @@ def mannwhitneyu(x, y, alternative: str):
         # catch case that arises if all input values are the same (likely all 0s)
         result = (len(x) * len(y) * 0.5, 1)
     return result
-    
+
     
 def table_mannwhitneyu(expression: pd.DataFrame, group1_cells: list, group2_cells: list, alternative='greater'):
     """Run one-sided (by default) MWU over all genes in a gene x cell expression matrix."""
@@ -248,7 +248,7 @@ class ExcludeSampleSubsampledDE:
                                         subsample_mode,
                                         group1_sample_cells,
                                         group2_sample_cells,
-                                        1,
+                                        11,
                                         len({**group1_cells, **group2_cells}[excluded]),
                                         excluded in group1_cells,
                                         excluded,
@@ -278,9 +278,9 @@ class ExcludeSampleSubsampledDE:
                 df_random = p_dict[key]
                 temp = []
                 for df_fold in df_fold_list:
-                    fold_name = df_fold.columns[0]
-                    vec_random_dist = df_random[fold_name]
-                    temp.extend([min(len(vec_random_dist[vec_random_dist>x])/len(vec_random_dist), len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist)) for x in df_fold.loc[ind,:]])
+                    fold_name = df_fold.columns[0].split("_")[0]
+                    vec_random_dist = df_random.loc[:,df_random.columns.str.contains(fold_name)].stack().values
+                    temp.extend([len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist) for x in df_fold.loc[ind,:]])
                 corr_p.loc[ind,] = temp
                 
             for folds in self.folds:

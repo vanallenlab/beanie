@@ -307,7 +307,7 @@ class Beanie:
         print("Scoring signatures...")
              
         # Score background signatures
-        sorted_genes = pd.Series.sort_values(obj.normalised_counts.sum(axis=1))
+        sorted_genes = pd.Series.sort_values(self.normalised_counts.sum(axis=1))
         self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, sorted_genes, no_random_sigs)
         self._null_dist_scores = dict()
         
@@ -646,20 +646,23 @@ class Beanie:
         Solid bars represent robust signatures with statistically significant differences.
         
         """
-        df_plot = self.de_summary[["p","U","effect","nonrobust","log2fold","direction"]]
-        df_plot = df_plot.loc[df_plot.p<=0.05,:]
-        df_plot["log_p"] = -np.log(df_plot.p)
-        df_plot["log_p"] = [df_plot["log_p"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_p"][count] for count in range(0,df_plot.shape[0])]
-        df_plot = df_plot.sort_values(by=["log_p"],axis=0)
+        if self._differential_expression_run==False:
+            raise RuntimeError("Run DifferentialExpression() first.")
+            
+        df_plot = self.de_summary[["p","U","effect","corr_p","nonrobust","log2fold","direction"]]
+        df_plot = df_plot.loc[df_plot.corr_p<=0.05,:]
+        df_plot["log_corrp"] = -np.log(df_plot.corr_p)
+        df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
+        df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
         size = df_plot.shape[0]
 
         plt.rcParams['hatch.color'] = '#FFFFFF'
         fig, axs = plt.subplots(figsize=(max(size/4,5),5))
-        bar = sns.barplot(x =df_plot.index ,y= "log_p", data=df_plot, color="#6CC9B6")
+        bar = sns.barplot(x =df_plot.index ,y= "log_corrp", data=df_plot, color="#6CC9B6")
         for i,thisbar in enumerate(bar.patches):
 
             #set different color for bars which are up in treatment-group2
-            if df_plot["log_p"][i]<0:
+            if df_plot["log_corrp"][i]<0:
                 thisbar.set_color("#D9C5E4")
 
             # Set a different hatch for bars which are non-robust
@@ -670,7 +673,7 @@ class Beanie:
         plt.hlines(linestyles='dashed',y=-np.log([0.05]), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
         plt.hlines(linestyles='dashed',y=np.log([0.05]), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
         axs.set_title("All statistically significant signatures")
-        axs.set_ylabel("log(q)")
+        axs.set_ylabel("log(corrected_p)")
         axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
 
         circ1 = mpatches.Patch(facecolor="#B2B1B0",alpha=0.5,hatch='\\\\',label='non-robust to subsampling')
@@ -774,13 +777,16 @@ class Beanie:
             signature_names                      names of signatures for which heatmap has to be plotted
         
         """
-                
+        
         if signature_names == None:
             if self._differential_expression_run==False:
                 raise RuntimeError("Run DifferentialExpression() first.")
             else:
                 signature_names = self.top_signatures
-        
+                
+        if self._driver_genes_run==False:
+            raise RuntimeError("Run DriverGenes() first.")
+            
         self.num_driver_genes = num_genes
         self.heatmap = dg.GenerateHeatmap(self.normalised_counts.T, self.t1_ids, self.t2_ids, self.d1_all, self.d2_all, self.driver_genes, signature_names, num_genes, **kwargs)
         return

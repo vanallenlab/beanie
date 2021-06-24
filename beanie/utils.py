@@ -106,7 +106,7 @@ def PValCorrectionPermutationTest(expression, t1_cells, t2_cells,
     """
     U, p = table_mannwhitneyu(expression.T, t1_cells, t2_cells, alternative)
     p_corr_U = min(len(U[U>U_uncorrected])/len(U),len(U[U<U_uncorrected])/len(U))
-    p_corr_p = min(len(p[p>p_uncorrected])/len(p),len(p[p<p_uncorrected])/len(p))
+    p_corr_p = len(p[p<p_uncorrected])/len(p)
     return p_corr_U, p_corr_p
 
         
