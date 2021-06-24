@@ -8,16 +8,11 @@ BEANIE also identifies driver genes for each signature/pathway to help character
 
 ## Getting Started
 
-To install via pip:
-
-```
-pip install beanie
-```
 
 To install via github:
 
 ```
-pip install git+ssh://git@github.com:sjohri20/beanie.git
+pip install git+https://github.com/sjohri20/beanie.git
 ```
 
 ## Software Requirements
