@@ -1,8 +1,8 @@
 # BEANIE: group Biology EstimAtion iN sIngle cEll
 
-BEANIE is a python package for differential expression analysis in single cell RNA-seq data. It estimates group-level biology between two treatment groups by identifying statistically robust gene signatures. It uses a subsampling based approach to account for over-representation of biology due to differing numbers of cells per sample, and hence helps to reduce the effects of sample biases in differential expression analysis. 
+BEANIE is a python package for differential expression analysis in single cell RNA-seq data. It estimates group-level biology between two treatment groups by identifying statistically robust gene signatures. It uses a subsampling based approach to account for over-representation of biology due to differing numbers of cells per sample, and sample-exclusion based approach to reduce the effect of sample biases in differential expression analysis. 
 
-## Getting Started
+## Installation
 
 To install via github:
 
@@ -66,9 +66,8 @@ adata.obs.to_csv(“metad.csv”)
 
 This file should contain the list of genes belonging to each signature name that the user wants to test. The acceptable formats are as follows -
 
-`.gmt (recommended)` - each row containing the gene names of particular signature; row names corresponding to signature names.
-
-`.csv`/'`.tsv` - every column containing the gene names of particular signature; column names corresponding to signature names.
+- `.gmt (recommended)` - each row containing the gene names of particular signature; row names corresponding to signature names.
+- `.csv`/'`.tsv` - every column containing the gene names of particular signature; column names corresponding to signature names.
 
 #### Signature Scores File
 
@@ -101,11 +100,9 @@ bobj = beanie.Beanie(counts_path = "./data/counts.csv",
 
 Beanie has many scoring methods that users can choose from. 
 
-`beanie` - modified version of AUCell/SCENIC scoring method. Takes the (normalised) counts matrix and does scaling by calculating the percentile value of every cells per gene. Then uses these percentile values to calculate ranks of every gene in the cell to generate a recovery plot. The AUC of the recovery plot is the score. This method does not make assumptions on the distribution of the data.
-
-`mean` - calculates the mean expression.
-
-`combined-z` - calculates the mean z-score.
+- `beanie` - modified version of AUCell/SCENIC scoring method. Takes the (normalised) counts matrix and does scaling by calculating the percentile value of every cells per gene. Then uses these percentile values to calculate ranks of every gene in the cell to generate a recovery plot. The AUC of the recovery plot is the score. This method does not make assumptions on the distribution of the data.
+- `mean` - calculates the mean expression.
+- `combined-z` - calculates the mean z-score.
 
 
 ```
