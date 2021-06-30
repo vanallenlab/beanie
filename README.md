@@ -20,7 +20,7 @@ python v3.6 (it does not work on python versions higher that 3.8 for now)
 
 #### Counts Matrix
 
-This is the un-normalised counts matrix (filtered reads). The users must do basic QC steps to remove ambient RNA contamination and doublets before running the method. The dimensions should be (genes x cells). `.csv` and `.tsv` formats are accepted.
+This is the un-normalised counts matrix (filtered reads). The users must do basic QC steps to remove ambient RNA contamination and doublets before running the method. The dimensions should be (genes x cells). `.csv` and `.tsv` formats are accepted. 
 
 Note1 : Seurat
 For a seurat object sobj;
@@ -42,7 +42,7 @@ counts_df.T.to_csv(“counts.csv”)
 
 This matrix can be later library normalised + log transformed within beanie workflow. If the users want to use a different kind of normalisation method, they can input the normalised counts matrix and set the **normalised = False** during object initialisation.
 
-Scanpy objects (.h5ad) are also accepted as input. In this case, un-normalised counts are extracted and **normalised=False** must be set during initialisation.
+Scanpy objects (`.h5ad`) are also accepted as input. In this case, un-normalised counts are extracted and **normalised=False** must be set during initialisation.
 
 #### Metadata
 
@@ -67,6 +67,7 @@ adata.obs.to_csv(“metad.csv”)
 This file should contain the list of genes belonging to each signature name that the user wants to test. The acceptable formats are as follows -
 
 `.gmt (recommended)` - each row containing the gene names of particular signature; row names corresponding to signature names.
+
 `.csv`/'`.tsv` - every column containing the gene names of particular signature; column names corresponding to signature names.
 
 #### Signature Scores File
@@ -101,9 +102,11 @@ bobj = beanie.Beanie(counts_path = "./data/counts.csv",
 Beanie has many scoring methods that users can choose from. 
 
 `beanie` - modified version of AUCell/SCENIC scoring method. Takes the (normalised) counts matrix and does scaling by calculating the percentile value of every cells per gene. Then uses these percentile values to calculate ranks of every gene in the cell to generate a recovery plot. The AUC of the recovery plot is the score. This method does not make assumptions on the distribution of the data.
+
 `mean` - calculates the mean expression.
+
 `combined-z` - calculates the mean z-score.
-`
+
 
 ```
 bobj.SignatureScoring(scoring_method="beanie")
