@@ -151,10 +151,10 @@ class Beanie:
         # Read signature file
         print("Reading signature file...")
         if sig_path.endswith(".csv"):
-            self.signatures = pd.read_csv(sig_path, index_col=0, sep=",")
+            self.signatures = pd.read_csv(sig_path, sep=",")
             self._writeSignatures()
         elif sig_path.endswith(".tsv"):
-            self.signatures = pd.read_csv(sig_path, index_col=0, sep="\t")
+            self.signatures = pd.read_csv(sig_path, sep="\t")
             self._writeSignatures()
         elif sig_path.endswith(".gmt"):
             self._sig_path=sig_path
