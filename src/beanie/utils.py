@@ -51,7 +51,7 @@ def GenerateNullDistributionSignatures(signature,sorted_genes,no_iters=200):
             
     random_set_dict = {}
     for key in size_dict.keys():
-        random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes=>q80].index.to_list(),int(key/5)) for i in range(no_iters)]
+        random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes>=q80].index.to_list(),int(key/5)) for i in range(no_iters)]
     
     print("Storing temp random sig files in directory...")
     dateTimeObj = datetime.now()
