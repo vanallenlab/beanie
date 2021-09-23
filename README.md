@@ -1,6 +1,8 @@
 # BEANIE: group Biology EstimAtion iN sIngle cEll
 
-BEANIE is a python package for differential expression analysis in single cell RNA-seq data. It estimates group-level biology between two treatment groups by identifying statistically robust gene signatures. It uses a subsampling based approach to account for over-representation of biology due to differing numbers of cells per sample, and sample-exclusion based approach to reduce the effect of sample biases in differential expression analysis. 
+BEANIE is a python package for differential expression analysis in single cell RNA-seq data. It estimates group-level biology between two treatment groups by identifying statistically significant and robust gene signatures. It uses a subsampling based approach to remove the effect of sample biases due to differing numbers of cells per sample, and sample-exclusion based approach  in to quantify robustness in differential signature enrichment analysis. 
+
+Tutorials can be found on the project wiki: https://www.github.com/sjohri20/beanie/wiki
 
 ## Installation
 
@@ -12,24 +14,8 @@ pip install git+https://github.com/sjohri20/beanie.git
 
 ## Software Requirements
 
-python v3.6 (it does not work on python versions higher that 3.8 for now)
+python v3.6 and above (<= 3.8)
 
-www.github.com/sjohri20/beanie/wiki
-
-
-#### Differential Expression
-
-*This is a time consuming step, and may take a few hours depending on the size of your dataset* 
-
-Beanie calculates Differential Expression by using a combination of sample exclusion, subsampling and Mann Whitey U tests. To remove the effects of patient specific biology, the data is divided into folds such that in every fold one patient (from either group) is excluded from the analysis. The number of folds is equal to the number of patients in the cohort. To take into account the cell number differences across patients, equal number of cells are subsampled from from every patient, and this process is repeated multiple times to ensure statistical stability of results). For each subsample, a mann whitney test is performed to calculate the p-value. The p values from all subsamples are combined into a single value using measures of central tendency. Robustness of p values (i.e. quantitative measure of whether a signature is driven by a particular patient's biology) is also calculated at this step.
-
-Beanie then uses a background distribution of random signatures to correct for p value inflation in the previous step. This step leads to accurate estimation of real p-value for the signature.
-This step cannot be done if the user provides a signature score file because the random signatures have to be scored by the same method as the real signatures to correct for p values properly. Hence, it is recommended that Beanie's inbuilt scoring methods be used.
-
-```
-bobj.DifferentialExpression()
-bobj.GetDifferentialExpressionSummary()
-```
 
 #### Gene Importance Ranking
 
@@ -77,6 +63,4 @@ Similarly, overlap between the all genes for signatures can also be seen. A list
 ```
 bobj.UpsetPlotSignatureGenes(signature_names=["signature_1", "signature_2", "signature_3", "signature_4", "signature_5"])
 ```
-
-
 
