@@ -804,10 +804,11 @@ class Beanie:
                     thisbar.set_alpha(alpha_val)
 
             if flag==1:
-                plt.hlines(linestyles='dashed',y=-0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
-                plt.hlines(linestyles='dashed',y=0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+                plt.hlines(linestyles='dashed',y=np.log10(0.05), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+                plt.hlines(linestyles='dashed',y=-np.log10(0.05), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
 
-            axs.set_title("Statistically significant signatures")
+            if flag==0:    
+                axs.set_title("Statistically significant signatures")
             axs.set_ylabel("empirical p-value")
             axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
             axs.set_ylim(bottom = -(significant_digits+1), top = significant_digits+1)
