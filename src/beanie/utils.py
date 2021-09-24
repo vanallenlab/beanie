@@ -8,12 +8,13 @@ import multiprocessing
 
 import pandas as pd
 import numpy as np
+import scipy as sp
 from scipy.stats import zscore, sem
 from math import sqrt
 
 # from rpy2.robjects.packages import importr
 
-from .differential_expression import table_mannwhitneyu
+from .differential_expression import table_test
 
 def CPMNormalisationLogScaling(counts,**kwargs):
     """
@@ -27,12 +28,12 @@ def CPMNormalisationLogScaling(counts,**kwargs):
     # pct_cells = 0.005    
     # counts_filtered = counts.loc[counts.gt(0).sum(axis=1)>int(pct_cells*counts.shape[1]),:]
 
-    df = np.log((counts*pow(10,6)/counts.sum(axis=0)) + 1 )
+    df = np.log((counts*pow(10,6)/counts.sum(axis=0)) + 1)
     
     return df
     
 
-def GenerateNullDistributionSignatures(signature,sorted_genes,no_iters=200):    
+def GenerateNullDistributionSignatures(signature,sorted_genes,bins,no_iters=200, random_state=42):    
     """Generate sets of random signatures of variable sizes"""
     
     print("Generating background distribution of random signatures...")
@@ -43,12 +44,13 @@ def GenerateNullDistributionSignatures(signature,sorted_genes,no_iters=200):
     
     size_dict = {}
     for x in signature.columns:
-        size = round(len(signature[x].dropna())/5)*5
+        size = max(5,round(len(signature[x].dropna())/bins)*bins)
         if size not in size_dict.keys():
             size_dict[size]=[x]
         else:
             size_dict[size].append(x)
-            
+    
+    random.seed(random_state)
     random_set_dict = {}
     for key in size_dict.keys():
         random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes>=q80].index.to_list(),int(key/5)) for i in range(no_iters)]
@@ -62,8 +64,9 @@ def GenerateNullDistributionSignatures(signature,sorted_genes,no_iters=200):
         
     return random_set_dict,dir_name
 
-def DownSampleCellsForPValCorrection(d:dict, t_cells:list, subsample_per_pat:int , no_subsample_cells:int, subsample_mode="max"):
+def DownSampleCellsForPValCorrection(d:dict, t_cells:list, subsample_per_pat:int , no_subsample_cells:int, subsample_mode="max", random_state=42):
     
+    np.random.seed(random_state)
     group = []
     for cells in d.values():
         group.extend(np.random.choice(cells, size=min(subsample_per_pat, len(cells)), replace=False))
@@ -94,8 +97,8 @@ def DownSampleCellsForPValCorrection(d:dict, t_cells:list, subsample_per_pat:int
 
     return group
     
-def PValCorrectionPermutationTest(expression, t1_cells, t2_cells,  
-                                  U_uncorrected: pd.Series, p_uncorrected: pd.Series, alternative="two-sided"):
+def PValCorrectionPermutationTest(expression, t1_cells, t2_cells, statistic_uncorrected: pd.Series, 
+                                  p_uncorrected: pd.Series, test_name:str, alternative="two-sided"):
     """Find the corrected pval based on mann whitney test.
     
     Parameters:
@@ -104,18 +107,18 @@ def PValCorrectionPermutationTest(expression, t1_cells, t2_cells,
         t2_cells
     
     """
-    U, p = table_mannwhitneyu(expression.T, t1_cells, t2_cells, alternative)
-    p_corr_U = min(len(U[U>U_uncorrected])/len(U),len(U[U<U_uncorrected])/len(U))
+    statistic, p = table_test(expression.T, t1_cells, t2_cells, test_name, alternative)
+    p_corr_statistic = min(len(statistic[statistic>statistic_uncorrected])/len(statistic), len(statistic[statistic<statistic_uncorrected])/len(statistic))
     p_corr_p = len(p[p<p_uncorrected])/len(p)
-    return p_corr_U, p_corr_p
+    return p_corr_statistic, p_corr_p
 
         
-def SignatureScoringZNormalisedHelper(counts, signature):
+def SignatureScoringZNormalisedHelper(counts, signature, random_state=42):
     """
     Helper function for SignatureScoringZNormalised()
     
     """
-    random.seed(3120)
+    random.seed(random_state)
 
     score_df = pd.DataFrame(index=counts.columns)
     gene_list = counts.index.to_list()
@@ -303,8 +306,8 @@ def CalculateLog2FoldChangeSigScores(signature_scores,d1,d2):
     
     """
     
-    t1_ids = list(d1.keys())
-    t2_ids = list(d2.keys())
+    t1_ids = sorted(list(d1.keys()))
+    t2_ids = sorted(list(d2.keys()))
     
     a1 = pd.DataFrame(index=signature_scores.columns)
     a2 = pd.DataFrame(index=signature_scores.columns)
@@ -344,11 +347,66 @@ def CalculateLog2FoldChangeSigScores(signature_scores,d1,d2):
     return results_df
 
 
-def CalculateSubsampleSize(metad, treatment_group_names, subsample_mode, **kwargs):
+def CalculateSubsampleSize(metad, treatment_group_names, subsample_mode, matched_normals, **kwargs):
     
     def choose_cells(group1_cells, group2_cells, group1_sample_cells, group2_sample_cells, 
-             excluded_cells, excluded, subsample_mode, excluded_from_group1=True):
+             excluded_cells, excluded, subsample_mode, excluded_from_group1=True, random_state=42):
         """Select cells to include in each iteration."""
+        
+        np.random.seed(random_state)
+        # choose cells
+        group1 = []
+        group2 = []
+
+        try:
+            for cells in group1_cells.values():
+                group1.extend(np.random.choice(cells, size=group1_sample_cells, replace=False))
+            for cells in group2_cells.values():
+                group2.extend(np.random.choice(cells, size=group2_sample_cells, replace=False))
+        except ValueError:
+            return "no"
+
+        # make up for cells that would have been sampled from excluded sample
+        replacements_needed = min(group1_sample_cells if excluded_from_group1 else group2_sample_cells,
+                                  excluded_cells)
+        replacement_group = group1_cells if excluded_from_group1 else group2_cells
+        already_chosen = group1 if excluded_from_group1 else group2
+        
+        replacement_candidates = []
+        for sample_cells in replacement_group.values():
+            sample_candidates = set(sample_cells) - set(already_chosen)
+            if sample_candidates:
+                replacement_candidates.append(sorted(sample_candidates))
+
+        if subsample_mode =="max":
+            try:
+                # weight for ~equal representation of samples
+                replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
+                replacement_weights /= replacement_weights.sum()
+                replacement_candidates = np.hstack(replacement_candidates)
+                already_chosen.extend(np.random.choice(replacement_candidates,
+                                                   size=replacements_needed,
+                                                   replace=False,
+                                                   p=replacement_weights))
+                return "yes"
+            except ValueError:
+                return "no"
+            
+        else:
+            try:
+                replacement_candidates = np.hstack(replacement_candidates)
+                already_chosen.extend(np.random.choice(replacement_candidates,
+                                               size=replacements_needed,
+                                               replace=False))
+                return "yes"
+            except ValueError:
+                return "no"
+            
+    def choose_cells_matched_normal(group1_cells, group2_cells, group1_sample_cells, group2_sample_cells, 
+             group1_excluded_cells, group2_excluded_cells, excluded, subsample_mode, random_state=42):
+        """Select cells to include in each iteration."""
+        
+        np.random.seed(random_state)
         # choose cells
         group1 = []
         group2 = []
@@ -360,65 +418,130 @@ def CalculateSubsampleSize(metad, treatment_group_names, subsample_mode, **kwarg
             group2.extend(np.random.choice(cells, size=min(group2_sample_cells, len(cells)), replace=False))
 
         # make up for cells that would have been sampled from excluded sample
-        replacements_needed = min(group1_sample_cells if excluded_from_group1 else group2_sample_cells,
-                                  excluded_cells)
-        replacement_group = group1_cells if excluded_from_group1 else group2_cells
-        already_chosen = group1 if excluded_from_group1 else group2
-        replacement_candidates = []
-        for sample_cells in replacement_group.values():
-            sample_candidates = set(sample_cells) - set(already_chosen)
-            if sample_candidates:
-                replacement_candidates.append(sorted(sample_candidates))
+        for already_chosen, sample_cells, replacement_group, excluded_cells in [(group1, self.group1_sample_cells, self.group1_cells, self.group1_excluded_cells),
+                                                                                (group2, self.group2_sample_cells, self.group2_cells, self.group2_excluded_cells)]:
+            replacements_needed = min(sample_cells, excluded_cells)
+            replacement_candidates = []
+            for sample_cells in replacement_group.values():
+                sample_candidates = set(sample_cells) - set(already_chosen)
+                if sample_candidates:
+                    replacement_candidates.append(sorted(sample_candidates))
 
-        # weight for ~equal representation of samples
-        replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
-        replacement_weights /= replacement_weights.sum()
-        replacement_candidates = np.hstack(replacement_candidates)
-        if subsample_mode =="max":
-            already_chosen.extend(np.random.choice(replacement_candidates,
-                                               size=replacements_needed,
-                                               replace=False,
-                                               p=replacement_weights))
-        else:
-            already_chosen.extend(np.random.choice(replacement_candidates,
-                                               size=replacements_needed,
-                                               replace=False))
+            if self.subsample_mode=="max":
+                try:
+                    # weight for ~equal representation of samples
+                    replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
+                    replacement_weights /= replacement_weights.sum()
+                    replacement_candidates = np.hstack(replacement_candidates)
+                    already_chosen.extend(np.random.choice(replacement_candidates,
+                                                           size=replacements_needed,
+                                                           replace=False,
+                                                           p=replacement_weights))
+                    return "yes"
+                except:
+                    return "no"
+                
+            else:
+                try:
+                    replacement_candidates = np.hstack(replacement_candidates)
+                    already_chosen.extend(np.random.choice(replacement_candidates,
+                                                           size=replacements_needed,
+                                                           replace=False))
+                    return "yes"
+                except ValueError:
+                    return "no"
             
             
-    t1_ids = list(set(metad[metad.treatment_group==treatment_group_names[0]].patient_id))
-    t2_ids = list(set(metad[metad.treatment_group==treatment_group_names[1]].patient_id))
+    t1_ids = sorted(list(set(metad[metad.treatment_group==treatment_group_names[0]].patient_id)))
+    t2_ids = sorted(list(set(metad[metad.treatment_group==treatment_group_names[1]].patient_id)))
 
     d1_all = {}
     for xid in t1_ids:
-        d1_all[xid]=metad[metad.patient_id==xid]["patient_id"].index.to_list()
+        d1_all[xid]=sorted(metad[metad.patient_id==xid]["patient_id"].index.to_list())
+#         print(xid,len(d1_all[xid]))
 
     d2_all = {}
     for xid in t2_ids:
-        d2_all[xid]=metad[metad.patient_id==xid]["patient_id"].index.to_list()
+        d2_all[xid]=sorted(metad[metad.patient_id==xid]["patient_id"].index.to_list())
+#         print(xid,len(d2_all[xid]))
 
+#     min_size = metad.patient_id.value_counts()[-1]
+    min_size = 1
+    max_size = metad.patient_id.value_counts()[0]
+    mid_size = int((min_size+max_size)/2)
+    cache=0
     
-    min_size = int(5*round(metad.patient_id.value_counts()[-1]/5))
-    max_size = int(5*round(metad.patient_id.value_counts()[0]/5))
-    steps = 5
-    
-    exclusions = []
-    if len(d1_all) > 1:
-        exclusions.extend(list(d1_all.keys()))
-    if len(d2_all) > 1:
-        exclusions.extend(list(d2_all.keys()))
-        
-    for i in range(min_size,max_size,steps):
-        for excluded in sorted(exclusions):
-            try: 
-                size = choose_cells(
-                    {x: y for x, y in d1_all.items() if x != excluded}, 
-                    {x: y for x, y in d2_all.items() if x != excluded}, 
-                    i, i, len({**d1_all, **d2_all}[excluded]), 
-                    excluded, subsample_mode, excluded in d1_all)
-            except ValueError:
-                return (i-steps)
-            
-    return max_size
+    while True:
+        if matched_normals == True:
+            exclusions = []
+            if len(d1_all) > 1:
+                exclusions.extend(list(d1_all.keys()))
+                
+            flag=0
+            for excluded in sorted(exclusions):
+                res = choose_cells_matched_normal(group1_cells = {x: y for x, y in d1_all.items() if x != excluded}, 
+                                                   group2_cells = {x: y for x, y in d2_all.items() if x != excluded}, 
+                                                   group1_sample_cells = mid_size, group2_sample_cells = mid_size,
+                                                   group1_excluded_cells = len(d1_all[excluded]),
+                                                   group2_excluded_cells = len(d1_all[excluded]),                    
+                                                   excluded = excluded, 
+                                                   subsample_mode = subsample_mode)
+                if res=="no":
+                    if max_size>min_size:
+                        max_size=mid_size
+                        mid_size=int((min_size+max_size)/2)
+                        flag=1
+                        break
+                    else:
+                        return cache
+                    
+            if flag==0:        
+                if max_size>min_size:
+                    if (max_size-min_size)<2:
+                        return cache
+                    else:
+                        cache=mid_size
+                        min_size=mid_size
+                        mid_size = int((min_size+max_size)/2)
+                else:
+                     return cache
+                    
+
+        else:
+            exclusions = []
+            if len(d1_all) > 1:
+                exclusions.extend(list(d1_all.keys()))
+            if len(d2_all) > 1:
+                exclusions.extend(list(d2_all.keys()))
+                
+            flag=0
+            for excluded in sorted(exclusions):
+                res = choose_cells(group1_cells = {x: y for x, y in d1_all.items() if x != excluded}, 
+                                   group2_cells = {x: y for x, y in d2_all.items() if x != excluded}, 
+                                   group1_sample_cells = mid_size, group2_sample_cells = mid_size,
+                                   excluded_cells = len({**d1_all, **d2_all}[excluded]), 
+                                   excluded = excluded, 
+                                   subsample_mode = subsample_mode, 
+                                   excluded_from_group1=excluded in d1_all)
+                if res=="no":
+                    if max_size>min_size:
+                        max_size=mid_size
+                        mid_size=int((min_size+max_size)/2)
+                        flag=1
+                        break
+                    else:
+                        return cache
+
+            if flag==0:        
+                if max_size>min_size:
+                    if (max_size-min_size)<2:
+                        return cache
+                    else:
+                        cache=mid_size
+                        min_size=mid_size
+                        mid_size = int((min_size+max_size)/2)
+                else:
+                     return cache
     
     
 def CalculateMaxIterations(max_subsample_size, **kwargs):
@@ -438,6 +561,4 @@ def CalculateMaxIterations(max_subsample_size, **kwargs):
     num_iters = temp
     return step_size, num_iters
 
-
-    
-    
+  

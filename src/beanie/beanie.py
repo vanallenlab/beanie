@@ -9,8 +9,11 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
+import scipy as sp
+from scipy.sparse import issparse
 
 import multiprocessing
+from joblib import Parallel, delayed
 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -32,10 +35,27 @@ from .utils import *
 from pyscenic.genesig import GeneSignature
 from .scoring_aucell import aucell, create_rankings
 
+# def convert_to_csr(df: pd.DataFrame):
+#     # convert genes x cells matrix into sparse row matrix for storage.
+#     obs_names = df.columns
+#     var_names = df.index
+#     counts = sp.sparse.csr_matrix(df)
+#     return obs_names, var_names, counts
+
+# def convert_to_df(mat, var, obs):
+#     # convert to dataframe from csr_matrix
+#     return pd.DataFrame(mat.todense(), index = var, columns = obs)
+
+# def convert_to_csc(df: pd.DataFrame):
+#     # convert genes x cells matrix into sparse column matrix for storage.
+#     obs_names = df.columns.to_list()
+#     var_names = df.index.to_list()
+#     counts = sp.sparse.csc_matrix(df)
+#     return obs_names, var_names, counts
 
 class Beanie:
     
-    def __init__(self, counts_path: str, metad_path: str, normalised:bool, sig_path=None, sig_score_path = None, subsample_mode = "equal", **kwargs):
+    def __init__(self, counts_path: str, metad_path: str, normalised:bool, sig_path=None, sig_score_path = None, subsample_mode = "equal", matched_normals=False, bin_size=10, min_cells=20, **kwargs):
         """
         
         Parameters:
@@ -78,6 +98,8 @@ class Beanie:
             self._candidate_robust_sigs_df
             self.subsample_mode               variable to decide whether smart-seq or 10x subsampling should be done
             self._null_dist_sigs              for storing dictionary of random gene sets corresponding to diff sizes of input sigs
+            self._bins
+            self._matched_normals          
             
         """
         ### check if all files exist/ have valid paths
@@ -86,9 +108,10 @@ class Beanie:
         
         if not os.path.exists(metad_path):
             raise FileNotFoundError("Meta data file does not exist. Please check metad_path.")
-
-        if not os.path.exists(sig_path):
-            raise FileNotFoundError("Signature file does not exist. Please check sig_path.")
+        
+        if sig_path!=None:
+            if not os.path.exists(sig_path):
+                raise FileNotFoundError("Signature file does not exist. Please check sig_path.")
                 
         if sig_score_path!=None:
             if not os.path.exists(sig_score_path):
@@ -98,14 +121,26 @@ class Beanie:
         print("Reading counts matrix...")
         if counts_path.endswith(".csv"):
             self.counts = pd.read_csv(counts_path, index_col=0, sep=",")
+#             self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts) 
         elif counts_path.endswith(".tsv"):
             self.counts = pd.read_csv(counts_path, index_col=0, sep="\t")
+#             self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
         elif counts_path.endswith(".h5ad"):
             sc_obj = sc.read(counts_path)
             if sc_obj.raw==None:
-                self.counts = pd.DataFrame(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
+                if issparse(sc_obj.X):
+                    self.counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
+#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                else:
+                    self.counts = pd.DataFrame(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
+#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
             else:
-                self.counts = pd.DataFrame(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
+                if issparse(sc_obj.raw.X):
+                    self.counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
+#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                else:
+                    self.counts = pd.DataFrame(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
+#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
         else:
             raise OSError("Counts matrix should be of the format .csv or .tsv, or a scanpy object .h5ad")
 
@@ -118,6 +153,10 @@ class Beanie:
         print("Reading meta data file...")
         if metad_path.endswith(".csv"):
             self.metad = pd.read_csv(metad_path, index_col=0, sep=",")
+            try:
+                self.metad = self.metad.loc[self.counts.columns,:]
+            except:
+                raise IOError("The cell ids in counts matrix and meta data file should match.")
         elif metad_path.endswith(".tsv"):
             self.metad = pd.read_csv(metad_path, index_col=0, sep="\t")
         else:
@@ -143,36 +182,36 @@ class Beanie:
 #                 self.group_direction = test_direction
 #                 if test_direction!=self.treatment_group_names[0]:
 #                     self.treatment_group_names.reverse()
-                
-        # check if cell ids in self.normalised_counts and self.metad match
-        if set(self.counts.columns) != set(self.metad.index):
-            raise IOError("The cell ids in counts matrix and meta data file should match.")
         
-        # Read signature file
-        print("Reading signature file...")
-        if sig_path.endswith(".csv"):
-            self.signatures = pd.read_csv(sig_path, sep=",")
-            self._writeSignatures()
-        elif sig_path.endswith(".tsv"):
-            self.signatures = pd.read_csv(sig_path, sep="\t")
-            self._writeSignatures()
-        elif sig_path.endswith(".gmt"):
-            self._sig_path=sig_path
-            with open(sig_path) as gmt:
-                ll = gmt.read()
-            ll_sigs = ll.split("\n")
-            if "" in ll_sigs:
-                ll_sigs.remove("")
-            li = []
-            for x in ll_sigs:
-                genes = x.split("\t")
-                li.append([i for i in genes if i])
-            self.signatures = pd.DataFrame(li).T
-            self.signatures.columns = self.signatures.iloc[0,:]
-            self.signatures = self.signatures.iloc[1:,]
-            self.signatures.index=range(len(self.signatures.index))    
+        if sig_path!= None:
+            print("Reading signature file...")
+            if sig_path.endswith(".csv"):
+                self.signatures = pd.read_csv(sig_path, index_col=0, sep=",")
+                self._writeSignatures()
+            elif sig_path.endswith(".tsv"):
+                self.signatures = pd.read_csv(sig_path, index_col=0, sep="\t")
+                self._writeSignatures()
+            elif sig_path.endswith(".gmt"):
+                self._sig_path=sig_path
+                with open(sig_path) as gmt:
+                    ll = gmt.read()
+                ll_sigs = ll.split("\n")
+                if "" in ll_sigs:
+                    ll_sigs.remove("")
+                li = []
+                for x in ll_sigs:
+                    genes = x.split("\t")
+                    li.append([i for i in genes if i])
+                self.signatures = pd.DataFrame(li).T
+                self.signatures.columns = self.signatures.iloc[0,:]
+                self.signatures = self.signatures.iloc[1:,]
+                self.signatures.index=range(len(self.signatures.index))    
+            else:
+                raise IOError("Signature file should be of the format .csv or .tsv or .gmt")
+
+        # If signatures have to be extracted from MsigDb
         else:
-            raise IOError("Signature file should be of the format .csv or .tsv or .gmt")
+            self._sig_path=None
                 
 
         # Read signature scores file
@@ -220,26 +259,57 @@ class Beanie:
         self.subsample_mode = subsample_mode
         self._differential_expression_run=False
         self._driver_genes_run=False
+        self._bins = bin_size
+        self._matched_normals = matched_normals
         
-        self.t1_ids = list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[0]].patient_id))
-        self.t2_ids = list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[1]].patient_id))
+        # check if matched normals, then both groups have same patients
+        if self._matched_normals==True:
+            p1 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[0],"patient_id"])
+            p2 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[1],"patient_id"])
+            if p1!=p2:
+                raise IOError("Cells are not provided for each sample in both groups.")
+        #check if there are any overlapping samples in the two treatment groups
+        elif self._matched_normals==False:
+            p1 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[0],"patient_id"])
+            p2 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[1],"patient_id"])
+            if len(p1.intersection(p2))!=0:
+                raise IOError("Same patient_id present in both groups.")
+            
+        # remove patients with cells < 20
+#         min_cells = 20
+        
+        cell_counts = self.metad.patient_id.value_counts()
+        pats_below_threshhold = cell_counts[cell_counts<min_cells].index.to_list()
+        if len(pats_below_threshhold)!=0:
+            print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed:", pats_below_threshhold)
+            self.metad = self.metad[~self.metad.patient_id.isin(pats_below_threshhold)]
+            self.counts = self.counts[self.metad.index]
+            
+        self.t1_ids = sorted(list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[0]].patient_id)))
+        self.t2_ids = sorted(list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[1]].patient_id)))
         
         self.d1_all = {}
         for xid in self.t1_ids:
-            self.d1_all[xid]=self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list()
+            self.d1_all[xid]=sorted(self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list())
             
         self.d2_all = {}
         for xid in self.t2_ids:
-            self.d2_all[xid]=self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list()
+            self.d2_all[xid]=sorted(self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list())
             
         self.t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
         self.t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()    
         
         if normalised==False:
+            print("Normalising counts...")
             self.normalised_counts = CPMNormalisationLogScaling(self.counts)
         else:
             self.normalised_counts = self.counts
-        self.max_subsample_size = CalculateSubsampleSize(self.metad, self.treatment_group_names, self.subsample_mode)
+            
+            
+        print("Calculating maximum subsample size...")
+        self.max_subsample_size = CalculateSubsampleSize(self.metad, self.treatment_group_names, self.subsample_mode, self._matched_normals)
+#         self.max_subsample_size = self.metad.patient_id.value_counts()[-1]
+        self.n_subsamples = min(int(self.metad.patient_id.value_counts()[0]/self.metad.patient_id.value_counts()[-1]),100)
         
         
         print("************************************************************")
@@ -259,23 +329,23 @@ class Beanie:
         
         return
     
-#     def GetSignatures(self,**kwargs):
-#         """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
+    def GetSignatures(self,**kwargs):
+        """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
         
-#         Parameters: 
-#             msigdb_species                           species for msigdb
-#             msigdb_category                          categories: chosen from H,C1,...C8
-#             msigdb_subcategory                       (optional) if present, for eg in case of C2.
+        Parameters: 
+            msigdb_species                           species for msigdb
+            msigdb_category                          categories: chosen from H,C1,...C8
+            msigdb_subcategory                       (optional) if present, for eg in case of C2.
         
-#         """
+        """
         
-#         if self._sig_path!=None:
-#             raise RuntimeError("A signature file has already been provided.")
+        if self._sig_path!=None:
+            raise RuntimeError("A signature file has already been provided.")
             
-#         self.signatures = GetSignaturesMsigDb(**kwargs)
-#         self._writeSignatures()
+        self.signatures = GetSignaturesMsigDb(**kwargs)
+        self._writeSignatures()
         
-#         return
+        return
 
         
     def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):
@@ -303,7 +373,7 @@ class Beanie:
              
         # Score background signatures
         sorted_genes = pd.Series.sort_values(self.normalised_counts.sum(axis=1))
-        self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, sorted_genes, no_random_sigs)
+        self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, sorted_genes, self._bins, no_random_sigs)
         self._null_dist_scores = dict()
         
         if scoring_method=="beanie":
@@ -362,9 +432,18 @@ class Beanie:
         print("Scoring Background distribution")
         
         if self._scoring_method=="beanie":
+#             n_cores = multiprocessing.cpu_count()
+            
+#             def paralleliseNullDistScoring(key):
+#                 signatures = GeneSignature.from_gmt("./"+self._null_dist_sigs_dir+"/"+str(key)+".gmt", field_separator='\t', gene_separator='\t')
+#                 return (key, aucell(self._rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=1))
+                
+#             self._null_dist_scores = dict(Parallel(n_jobs=multiprocessing.cpu_count())(delayed(paralleliseNullDistScoring)(key) for key in self._null_dist_sigs.keys()))  
+            
             for key in tqdm(self._null_dist_sigs.keys()):
                 signatures = GeneSignature.from_gmt("./"+self._null_dist_sigs_dir+"/"+str(key)+".gmt", field_separator='\t', gene_separator='\t')
                 self._null_dist_scores[key] = aucell(self._rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=multiprocessing.cpu_count())
+
             rmtree(self._null_dist_sigs_dir)
 
             
@@ -392,7 +471,7 @@ class Beanie:
         return        
                 
         
-    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, group_direction = None, **kwargs):
+    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, test_name="mwu-test", group_direction = None, **kwargs):
         """
         Function for finding out differentially expressed robust and statistically significant signatures. 
         
@@ -406,6 +485,10 @@ class Beanie:
             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
         
         """
+        if test_name in ["mwu-test","t-test","ks-test","kwh-test","welch-test"]:
+            self._de_test_name = test_name
+        else:
+            raise IOError("The 'test_name' must be one of 'mwu-test', 't-test', 'ks-test', 'kwh-test', 'welch-test'.") 
         
         correction_method = "fdr_bh"
         if cells_to_subsample_1 == None:
@@ -421,59 +504,85 @@ class Beanie:
             cells_to_subsample_2 = self.max_subsample_size    
         
 
+#         subsamples = self.n_subsamples
         if group_direction!=None:
             if group_direction not in self.treatment_group_names:
                 raise IOError("The group_direction entered is not in the treatment groups. Please check group_direction.")
         else:
             group_direction = self.treatment_group_names[0]
                 
-        sig_size_dict = {x:round(len(self.signatures[x].dropna())/5)*5 for x in self.signatures.columns}
-        
-        if self._sig_score_path==None:
+        sig_size_dict = {x:max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins) for x in self.signatures.columns}
+        if self._matched_normals == False:
             self.de_obj = de.ExcludeSampleSubsampledDE(self.signature_scores.T, sig_size_dict, self._null_dist_scores,
-                                                   self.d1_all, self.d2_all, self.subsample_mode,
-                                                   group1_sample_cells=cells_to_subsample_1, 
-                                                   group2_sample_cells=cells_to_subsample_2,
-                                                   samples_per_fold=subsamples,**kwargs)
-        
-        else:
-            self.de_obj = de.ExcludeSampleSubsampledDENoCorrection(self.signature_scores.T, 
-                                                   self.d1_all, self.d2_all, self.subsample_mode,
-                                                   group1_sample_cells=cells_to_subsample_1, 
-                                                   group2_sample_cells=cells_to_subsample_2,
-                                                   samples_per_fold=subsamples,**kwargs)
-        
-        self.de_obj.run()
-        self.de_summary = self.de_obj.summarize(alpha, min_ratio)
-        self.de_summary.insert(1,"corrected_p_inbuilt",multipletests(self.de_summary.p, method = correction_method)[1])
-        
-        if self._sig_score_path==None:
-            # correct for multiple hypothesis        
-            gr1_subsampled_cells = DownSampleCellsForPValCorrection(self.d1_all, self.t1_cells,
-                                                   self.max_subsample_size, self.de_obj.folds[0].group1_cell_count)
-            gr2_subsampled_cells = DownSampleCellsForPValCorrection(self.d2_all, self.t2_cells,
-                                                   self.max_subsample_size, self.de_obj.folds[0].group2_cell_count)
+                                                       self.d1_all, self.d2_all, self.subsample_mode,
+                                                       group1_sample_cells=cells_to_subsample_1, 
+                                                       group2_sample_cells=cells_to_subsample_2,
+                                                       samples_per_fold=subsamples, test_name=test_name, **kwargs)
 
-            pval_corrected_list_U = []  
-            pval_corrected_list_p = []                                                             
-            for x in self.de_summary.index:
-                key = round(len(self.signatures[x].dropna())/5)*5
-                U,p = PValCorrectionPermutationTest(expression=self._null_dist_scores[key], 
-                                                     t1_cells = gr1_subsampled_cells, 
-                                                     t2_cells = gr2_subsampled_cells,
-                                                     U_uncorrected = self.de_summary.loc[x,"U"], 
-                                                     p_uncorrected = self.de_summary.loc[x,"p"])
+            self.de_obj.run()
+            self.de_summary = self.de_obj.summarize(alpha, min_ratio)
+            self.de_summary.insert(1,"corrected_p_inbuilt",multipletests(self.de_summary.p, method = correction_method)[1])
 
-                pval_corrected_list_U.append(U)     
-                pval_corrected_list_p.append(p)                                                                
+#             # correct for multiple hypothesis        
+#             gr1_subsampled_cells = DownSampleCellsForPValCorrection(self.d1_all, self.t1_cells, cells_to_subsample_1,
+#                                                                     self.de_obj.folds[0].group1_cell_count)
+#             gr2_subsampled_cells = DownSampleCellsForPValCorrection(self.d2_all, self.t2_cells, cells_to_subsample_2,
+#                                                                     self.de_obj.folds[0].group2_cell_count)
 
-            self.de_summary.insert(1, "corrected_p_new_U", pval_corrected_list_U)
-            self.de_summary.insert(1, "corrected_p_new_p", pval_corrected_list_p)
+#             pval_corrected_list_statistic = []  
+#             pval_corrected_list_p = []                                                             
+#             for x in self.de_summary.index:
+#                 key = max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins)
+#                 statistic,p = PValCorrectionPermutationTest(expression=self._null_dist_scores[key], 
+#                                                              t1_cells = gr1_subsampled_cells, 
+#                                                              t2_cells = gr2_subsampled_cells,
+#                                                              statistic_uncorrected = self.de_summary.loc[x,"statistic"], 
+#                                                              p_uncorrected = self.de_summary.loc[x,"p"],
+#                                                              test_name = self._de_test_name)
 
-                                                                           
+#                 pval_corrected_list_statistic.append(statistic)     
+#                 pval_corrected_list_p.append(p)                                                                
+
+#             self.de_summary.insert(1, "corrected_p_new_statistic", pval_corrected_list_statistic)
+#             self.de_summary.insert(1, "corrected_p_new_p", pval_corrected_list_p)
+
+        elif self._matched_normals == True:
+            self.de_obj = de.ExcludePatientPairedSubsampleDE(self.signature_scores.T, sig_size_dict, self._null_dist_scores,
+                                                       self.d1_all, self.d2_all, self.subsample_mode,
+                                                       group1_sample_cells=cells_to_subsample_1, 
+                                                       group2_sample_cells=cells_to_subsample_2,
+                                                       samples_per_fold=subsamples, test_name=test_name, **kwargs)
+
+
+            self.de_obj.run()
+            self.de_summary = self.de_obj.summarize(alpha, min_ratio)
+            self.de_summary.insert(1,"corrected_p_inbuilt",multipletests(self.de_summary.p, method = correction_method)[1])
+            
+#             gr1_subsampled_cells = DownSampleCellsForPValCorrection(self.d1_all, self.t1_cells, cells_to_subsample_1,
+#                                                                     self.de_obj.folds[0].group1_cell_count)
+#             gr2_subsampled_cells = DownSampleCellsForPValCorrection(self.d2_all, self.t2_cells, cells_to_subsample_2,
+#                                                                     self.de_obj.folds[0].group2_cell_count)
+
+#             pval_corrected_list_statistic = []  
+#             pval_corrected_list_p = []                                                             
+#             for x in self.de_summary.index:
+#                 key = max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins)
+#                 statistic,p = PValCorrectionPermutationTest(expression=self._null_dist_scores[key], 
+#                                                              t1_cells = gr1_subsampled_cells, 
+#                                                              t2_cells = gr2_subsampled_cells,
+#                                                              statistic_uncorrected = self.de_summary.loc[x,"statistic"], 
+#                                                              p_uncorrected = self.de_summary.loc[x,"p"],
+#                                                              test_name = self._de_test_name)
+
+#                 pval_corrected_list_statistic.append(statistic)     
+#                 pval_corrected_list_p.append(p)                                                                
+
+#             self.de_summary.insert(1, "corrected_p_new_statistic", pval_corrected_list_statistic)
+#             self.de_summary.insert(1, "corrected_p_new_p", pval_corrected_list_p)
+            
         # calculate other stats
         results_df = CalculateLog2FoldChangeSigScores(self.signature_scores, self.d1_all, self.d2_all)
-        self.de_summary = pd.concat([results_df,self.de_summary],axis=1, sort=False)
+        self.de_summary = pd.concat([results_df,self.de_summary], axis=1, sort=False)
         self.de_summary["direction"] = [self.treatment_group_names[0] if x==True else self.treatment_group_names[1] for x in self.de_summary.direction]
 
         # calculate the robust signatures in direction of interest: by default gr1 
@@ -491,9 +600,9 @@ class Beanie:
     def GetDifferentialExpressionSummary(self):
         if self._differential_expression_run==True:
             if self._sig_score_path==None:
-                return self.de_summary[["log2fold","p","corr_p","corrected_p_new_p","effect","nonrobust","direction"]]
+                return self.de_summary[["log2fold","p","corr_p","corrected_p_inbuilt","nonrobust","direction"]]
             else:
-                return self.de_summary[["log2fold","p","corr_p","effect","nonrobust","direction"]]
+                return self.de_summary[["log2fold","p","corr_p","nonrobust","direction"]]
         else:
             raise RuntimeError("Run DifferentialExpression() first.")
             
@@ -634,7 +743,7 @@ class Beanie:
         return
 
                
-    def BarPlot(self):
+    def BarPlot(self,**kwargs):
         """
         Function for generating barplot for statistically significant pathways (robust and non-robust).
         Hatched bars represent signatures with statistically significant differences between groups but non-robust to subsampling.
@@ -643,21 +752,27 @@ class Beanie:
         """
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
-            
-        df_plot = self.de_summary[["p","U","effect","corr_p","nonrobust","log2fold","direction"]]
-        df_plot = df_plot.loc[df_plot.corr_p<=0.05,:]
-        df_plot["log_corrp"] = -np.log(df_plot.corr_p)
-        df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
-        df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
+        
+        flag=0
+        df_plot = self.de_summary[["p","statistic","corr_p","nonrobust","log2fold","direction"]]
+        if df_plot.loc[df_plot.corr_p<=0.05,:].shape[0]!=0:
+            df_plot = df_plot.loc[df_plot.corr_p<=0.05,:]
+        else:
+            flag=1
+            print("No significant signature found...")
+
+        df_plot["corr_p"] = df_plot.corr_p+0.0001
+        df_plot["corr_p"] = [df_plot["corr_p"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["corr_p"][count] for count in range(0,df_plot.shape[0])]
+        df_plot = df_plot.sort_values(by=["corr_p"],axis=0)
         size = df_plot.shape[0]
 
         plt.rcParams['hatch.color'] = '#FFFFFF'
-        fig, axs = plt.subplots(figsize=(max(size/4,5),5))
-        bar = sns.barplot(x =df_plot.index ,y= "log_corrp", data=df_plot, color="#6CC9B6")
+        fig, axs = plt.subplots(dpi=300)
+        bar = sns.barplot(x =df_plot.index ,y= "corr_p", data=df_plot, color="#6CC9B6",**kwargs)
         for i,thisbar in enumerate(bar.patches):
 
             #set different color for bars which are up in treatment-group2
-            if df_plot["log_corrp"][i]<0:
+            if df_plot["corr_p"][i]<0:
                 thisbar.set_color("#D9C5E4")
 
             # Set a different hatch for bars which are non-robust
@@ -665,10 +780,12 @@ class Beanie:
                 thisbar.set_hatch("\\")
                 thisbar.set_alpha(0.5)
 
-        plt.hlines(linestyles='dashed',y=-np.log([0.05]), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
-        plt.hlines(linestyles='dashed',y=np.log([0.05]), xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+        if flag==1:
+            plt.hlines(linestyles='dashed',y=-0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+            plt.hlines(linestyles='dashed',y=0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+            
         axs.set_title("All statistically significant signatures")
-        axs.set_ylabel("log(corrected_p)")
+        axs.set_ylabel("empirical p-value")
         axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
 
         circ1 = mpatches.Patch(facecolor="#B2B1B0",alpha=0.5,hatch='\\\\',label='non-robust to subsampling')
@@ -690,7 +807,11 @@ class Beanie:
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
             
-        non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corr_p<=0.05)]
+        if self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corr_p<=0.05)].shape[0]==0:
+            print("No significant signatures found...")
+            non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True)]
+        else:
+            non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corr_p<=0.05)]
         non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
         non_robust_sig_plot.columns = [x[9:] for x in non_robust_sig_plot.columns]
         
@@ -713,13 +834,14 @@ class Beanie:
         
         mat["sum"] = mat.sum(axis=1)
         mat = mat.sort_values(by=["sum"]).drop(["sum"], axis=1)
+        mat = mat.astype(int)
 
         df_main = non_robust_sig_plot.loc[mat.index,mat.columns]
         
         with sns.plotting_context("notebook", rc={'axes.titlesize' : 12,
                                            'axes.labelsize' : 10,
-                                           'xtick.labelsize' : 10,
-                                           'ytick.labelsize' : 8,
+                                           'xtick.labelsize' : 14,
+                                           'ytick.labelsize' : 14,
                                            'font.name' : u'Arial'}):
             fig = plt.figure(figsize=(15,10),dpi=300)
             gs = GridSpec(4,4)
@@ -730,7 +852,7 @@ class Beanie:
 
             sns.boxplot(data=df_main.T, color="#6CC9B6",ax=ax_xDist)
             ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
-            ax_xDist.set_ylabel("Fold Rejection Ratio");
+            ax_xDist.set_ylabel("Fold Rejection Ratio",size=14);
             ax_xDist.set_ylim(bottom=-0.5)
 
             heatmap = sns.heatmap(mat.T, cmap="RdPu",ax=ax_main, cbar=False, vmin=0,vmax=2.0, linewidths=0.5, linecolor="#F7DD8B")
@@ -744,7 +866,7 @@ class Beanie:
 
             ax_yDist.barh(np.arange(mat.shape[1])+0.5,mat.T.sum(axis=1),color="#FED298")
             ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
-            ax_yDist.set_xlabel("#dropouts/patient");
+            ax_yDist.set_xlabel("#dropouts/patient",size=16);
             ax_yDist.set_xlim([0,mat.T.shape[1]]);
 
             if annotate==True:
@@ -827,7 +949,7 @@ class Beanie:
             else:
                 intersection.append(0)
         upset_df["Intersection"] = intersection
-        upset_df = upset_df.groupby(by = signature_names).first()
+        upset_df = upset_df.groupby(by = signature_names).sum()
         
         self.upsetplot_driver_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality')
         return
@@ -859,7 +981,7 @@ class Beanie:
             else:
                 intersection.append(0)
         upset_df["Intersection"] = intersection
-        upset_df = upset_df.groupby(by = signature_names).first()
+        upset_df = upset_df.groupby(by = signature_names).sum()
         self.upsetplot_signature_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality')
         return
     
