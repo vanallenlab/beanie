@@ -364,6 +364,7 @@ class ExcludeSampleSubsampledDE:
             p_dict = {k: pd.concat([fold.p for fold in self.null_dist_folds[k]], axis=1, sort=False) for k in self.null_dist_folds.keys()}
             corr_p = pd.DataFrame(index = p.index, columns = p.columns)
             df_fold_list = np.array_split(p, len(self.group1_cells.keys())+len(self.group2_cells.keys()), axis=1)
+            significant_digits=0
             for ind in tqdm(range(len(p.index))):
                 key = self.sig_size_dict[p.index[ind]]
                 df_random = p_dict[key]
@@ -371,15 +372,35 @@ class ExcludeSampleSubsampledDE:
                 for df_fold in df_fold_list:
                     fold_name = df_fold.columns[0].split("_")[0]
                     vec_random_dist = df_random.loc[:,df_random.columns.str.contains(fold_name)].stack().values
-                    temp.extend([len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist) for x in df_fold.iloc[ind,:]])
+                    significant_digits = len(str(len(vec_random_dist)))-1
+                    # also round off to significant digits while calculating percentile per subsample
+                    temp.extend([round(len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist),significant_digits) for x in df_fold.iloc[ind,:]])
                 corr_p.iloc[ind,] = temp
-                
+            
+            statistic_p_per_fold = pd.DataFrame(index = statistic.index)
+            statistic_corrp_per_fold = pd.DataFrame(index = statistic.index)
+            p_per_fold = pd.DataFrame(index = p.index)
+            corrp_per_fold = pd.DataFrame(index = corr_p.index)
+            
             for folds in self.folds:
                 folds.corr_p = corr_p.loc[:,corr_p.columns.str.contains(folds.name)]
+                fold_median_statistic_p, fold_p_at_median_statistic = median_statistic_and_corresponding_p(folds.statistic.values, folds.p.values)
+                fold_median_statistic_corrp, fold_corr_p_at_median_statistic = median_statistic_and_corresponding_p(folds.statistic.values, folds.corr_p.values)
+                
+                # round off corr_p to the significant digits (needed in case the number of subsamples is even digit)
+                fold_corr_p_at_median_statistic = fold_corr_p_at_median_statistic.astype(float).round(significant_digits)
+                
+                p_per_fold[folds.name] = fold_p_at_median_statistic
+                corrp_per_fold[folds.name] = fold_corr_p_at_median_statistic
+                statistic_p_per_fold[folds.name] = fold_median_statistic_p
+                statistic_corrp_per_fold[folds.name] = fold_median_statistic_corrp
             
-            median_statistic_p, p_at_median_statistic = median_statistic_and_corresponding_p(statistic.values, p.values)
-            median_statistic_corrp, corr_p_at_median_statistic = median_statistic_and_corresponding_p(statistic.values, corr_p.values)
+            median_statistic_p, p_at_median_statistic = median_statistic_and_corresponding_p(statistic_p_per_fold.values, p_per_fold.values)
+            median_statistic_corrp, corr_p_at_median_statistic = median_statistic_and_corresponding_p(statistic_corrp_per_fold.values, corrp_per_fold.values)
 
+            # round off corr_p to the significant digits (needed in case the number of folds is even digit)
+            corr_p_at_median_statistic = corr_p_at_median_statistic.astype(float).round(significant_digits)
+            
             if self.test_name=="mwu-test":
                 effect = median_statistic_corrp / (self.folds[0].group1_cell_count * self.folds[0].group2_cell_count)
                 self.summary = pd.DataFrame({'p': p_at_median_statistic, 'corr_p':corr_p_at_median_statistic, 'statistic': median_statistic_corrp, 'effect': effect}, index=self.folds[0].statistic.index)
