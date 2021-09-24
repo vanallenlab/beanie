@@ -364,15 +364,15 @@ class ExcludeSampleSubsampledDE:
             p_dict = {k: pd.concat([fold.p for fold in self.null_dist_folds[k]], axis=1, sort=False) for k in self.null_dist_folds.keys()}
             corr_p = pd.DataFrame(index = p.index, columns = p.columns)
             df_fold_list = np.array_split(p, len(self.group1_cells.keys())+len(self.group2_cells.keys()), axis=1)
-            for ind in tqdm(p.index):
-                key = self.sig_size_dict[ind]
+            for ind in tqdm(range(len(p.index))):
+                key = self.sig_size_dict[p.index[ind]]
                 df_random = p_dict[key]
                 temp = []
                 for df_fold in df_fold_list:
                     fold_name = df_fold.columns[0].split("_")[0]
                     vec_random_dist = df_random.loc[:,df_random.columns.str.contains(fold_name)].stack().values
-                    temp.extend([len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist) for x in df_fold.loc[ind,:]])
-                corr_p.loc[ind,] = temp
+                    temp.extend([len(vec_random_dist[vec_random_dist<x])/len(vec_random_dist) for x in df_fold.iloc[ind,:]])
+                corr_p.iloc[ind,] = temp
                 
             for folds in self.folds:
                 folds.corr_p = corr_p.loc[:,corr_p.columns.str.contains(folds.name)]
