@@ -743,16 +743,19 @@ class Beanie:
         return
 
                
-    def BarPlot(self,**kwargs):
+    def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#6CC9B6", color_gr2 = "#D9C5E4", alpha_val = 0.5, fig_aspect=0.75, **kwargs):
         """
         Function for generating barplot for statistically significant pathways (robust and non-robust).
         Hatched bars represent signatures with statistically significant differences between groups but non-robust to subsampling.
         Solid bars represent robust signatures with statistically significant differences.
-        
+
         """
+
+        # define all kwargs parameters
+
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
-        
+
         flag=0
         df_plot = self.de_summary[["p","statistic","corr_p","nonrobust","log2fold","direction"]]
         if df_plot.loc[df_plot.corr_p<=0.05,:].shape[0]!=0:
@@ -760,43 +763,75 @@ class Beanie:
         else:
             flag=1
             print("No significant signature found...")
+            return
 
-        df_plot["corr_p"] = df_plot.corr_p+0.0001
-        df_plot["corr_p"] = [df_plot["corr_p"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["corr_p"][count] for count in range(0,df_plot.shape[0])]
-        df_plot = df_plot.sort_values(by=["corr_p"],axis=0)
+        # find number of significant digits
+        keys = sorted(bobj.de_obj.null_dist_folds.keys())
+        significant_digits = len(str(len(bobj.de_obj.null_dist_folds[keys[0]][0].p.stack().values)))-1
+
+        # make values non-zero for taking log
+        a = df_plot.corr_p.copy()
+        for i in range(len(a)):
+            if a[i]==0:
+                a[i] += 1/pow(10,significant_digits)
+        df_plot["corr_p_modified"] = (a).astype(float)
+        
+        df_plot["log_corrp"] = -np.log10(df_plot["corr_p_modified"])
+        df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
+        df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
         size = df_plot.shape[0]
 
-        plt.rcParams['hatch.color'] = '#FFFFFF'
-        fig, axs = plt.subplots(dpi=300)
-        bar = sns.barplot(x =df_plot.index ,y= "corr_p", data=df_plot, color="#6CC9B6",**kwargs)
-        for i,thisbar in enumerate(bar.patches):
+        plt.rcParams['hatch.color'] = hatch_color
 
-            #set different color for bars which are up in treatment-group2
-            if df_plot["corr_p"][i]<0:
-                thisbar.set_color("#D9C5E4")
+        fig_width = size
+        fig_height = fig_width*fig_aspect
+        with sns.plotting_context("notebook", rc={'axes.titlesize' : 10,
+                                               'axes.labelsize' : 10,
+                                               'xtick.labelsize' : 10,
+                                               'ytick.labelsize' : 12,
+                                               'font.name' : u'Arial'}):
+            fig, axs = plt.subplots(figsize=(fig_width,fig_height),dpi=dpi_res)
+            bar = sns.barplot(x=df_plot.index ,y= "log_corrp", data=df_plot, color=color_gr1, **kwargs)
+            for i,thisbar in enumerate(bar.patches):
 
-            # Set a different hatch for bars which are non-robust
-            if df_plot["nonrobust"][i]:
-                thisbar.set_hatch("\\")
-                thisbar.set_alpha(0.5)
+                #set different color for bars which are up in treatment-group2
+                if df_plot["log_corrp"][i]<0:
+                    thisbar.set_color(color_gr2)
 
-        if flag==1:
-            plt.hlines(linestyles='dashed',y=-0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
-            plt.hlines(linestyles='dashed',y=0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
-            
-        axs.set_title("All statistically significant signatures")
-        axs.set_ylabel("empirical p-value")
-        axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
+                # Set a different hatch for bars which are non-robust
+                if df_plot["nonrobust"][i]:
+                    thisbar.set_hatch("\\")
+                    thisbar.set_alpha(alpha_val)
 
-        circ1 = mpatches.Patch(facecolor="#B2B1B0",alpha=0.5,hatch='\\\\',label='non-robust to subsampling')
-        circ2 = mpatches.Patch(facecolor="#6CC9B6",label='robust to subsampling-up in '+self.treatment_group_names[0])
-        circ3 = mpatches.Patch(facecolor="#D9C5E4",label='robust to subsampling-up in '+self.treatment_group_names[1])
-        axs.legend(handles = [circ1,circ2,circ3],bbox_to_anchor=(1.01, 1), loc='upper left')
+            if flag==1:
+                plt.hlines(linestyles='dashed',y=-0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
+                plt.hlines(linestyles='dashed',y=0.05, xmin=-0.5, xmax=df_plot.shape[0]-0.5,colors=".3")
 
-        plt.xticks(rotation=90);
-        self.barplot = fig
-        return
+            axs.set_title("Statistically significant signatures")
+            axs.set_ylabel("empirical p-value")
+            axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
+            axs.set_ylim(bottom = -(significant_digits+1), top = significant_digits+1)
 
+            circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='non-robust to subsampling')
+            circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='robust to subsampling')
+            circ3 = mpatches.Patch(facecolor=color_gr1, label='enriched in '+self.treatment_group_names[0])
+            circ4 = mpatches.Patch(facecolor=color_gr2, label='enriched in '+self.treatment_group_names[1])
+            axs.legend(handles = [circ1,circ2,circ3,circ4], bbox_to_anchor=(1.01, 1), loc='upper left')
+
+            # Add *** above bars which have p-val<1/significant_digits
+            count = 0
+            for p in axs.patches:
+                _x = p.get_x() + p.get_width() / 2
+                _y = p.get_y() + p.get_height()
+                if abs(_y)==significant_digits and df_plot.iloc[count,:].corr_p==0:
+                    if _y<0:
+                        axs.text(_x, _y-0.5, "***", ha="center") 
+                    else:
+                        axs.text(_x, _y+0.5, "***", ha="center") 
+            plt.xticks(rotation=90);
+
+            self.barplot = fig
+            return
     
     def PatientDropoutPlot(self, annotate=True):
         """
