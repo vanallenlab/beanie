@@ -485,6 +485,9 @@ class Beanie:
             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
         
         """
+        self._alpha = alpha
+        self._min_ratio = min_ratio
+        
         if test_name in ["mwu-test","t-test","ks-test","kwh-test","welch-test"]:
             self._de_test_name = test_name
         else:
@@ -837,12 +840,12 @@ class Beanie:
     def PatientDropoutPlot(self, annotate=True):
         """
         Function to Matrix for whether a patient 
-        
+
         """
-        
+
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
-            
+
         if self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corr_p<=0.05)].shape[0]==0:
             print("No significant signatures found...")
             non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True)]
@@ -850,9 +853,9 @@ class Beanie:
             non_robust_sig = self.de_summary[(self.de_summary.nonrobust==True) & (self.de_summary.corr_p<=0.05)]
         non_robust_sig_plot = non_robust_sig[self.de_summary.columns[self.de_summary.columns.str.startswith("excluded")]]
         non_robust_sig_plot.columns = [x[9:] for x in non_robust_sig_plot.columns]
-        
+
         size=non_robust_sig_plot.shape[0]
-        
+
         # Label the outliers
         q25 = non_robust_sig_plot.T.quantile(0.25).to_numpy()
         q75 = non_robust_sig_plot.T.quantile(0.75).to_numpy()
@@ -861,25 +864,25 @@ class Beanie:
         mat = pd.DataFrame(index = non_robust_sig_plot.index, columns = non_robust_sig_plot.columns)
         for i in range(non_robust_sig_plot.shape[0]):
             fr_ratio = non_robust_sig_plot.iloc[i,:]
-            pats = [x for x in fr_ratio[fr_ratio<outlier_bottom_lim[i]].index.to_list()]
+            pats = [x for x in fr_ratio[fr_ratio<self._min_ratio].index.to_list()]
             mat.iloc[i,:] = mat.columns.isin(pats).astype(int)
-        
+
         # sort matrix accoring to frequency (rowsum, colsum)
-        mat.loc["sum",] = mat.sum(axis=0)
+        mat.loc["sum",:] = mat.sum(axis=0)
         mat = mat.T.sort_values(by=["sum"]).T.drop(["sum"])
-        
+
         mat["sum"] = mat.sum(axis=1)
         mat = mat.sort_values(by=["sum"]).drop(["sum"], axis=1)
         mat = mat.astype(int)
 
         df_main = non_robust_sig_plot.loc[mat.index,mat.columns]
-        
+
         with sns.plotting_context("notebook", rc={'axes.titlesize' : 12,
                                            'axes.labelsize' : 10,
                                            'xtick.labelsize' : 14,
                                            'ytick.labelsize' : 14,
                                            'font.name' : u'Arial'}):
-            fig = plt.figure(figsize=(15,10),dpi=300)
+            fig = plt.figure(figsize=(17.5,8),dpi=300)
             gs = GridSpec(4,4)
             gs.update(wspace=0.015, hspace=0.05)
             ax_main = plt.subplot(gs[1:4, :3])
@@ -888,7 +891,7 @@ class Beanie:
 
             sns.boxplot(data=df_main.T, color="#6CC9B6",ax=ax_xDist)
             ax_xDist.xaxis.set_tick_params(which='both', labeltop=False, labelbottom=False)
-            ax_xDist.set_ylabel("Fold Rejection Ratio",size=14);
+            ax_xDist.set_ylabel("FRR",size=14);
             ax_xDist.set_ylim(bottom=-0.5)
 
             heatmap = sns.heatmap(mat.T, cmap="RdPu",ax=ax_main, cbar=False, vmin=0,vmax=2.0, linewidths=0.5, linecolor="#F7DD8B")
@@ -902,7 +905,7 @@ class Beanie:
 
             ax_yDist.barh(np.arange(mat.shape[1])+0.5,mat.T.sum(axis=1),color="#FED298")
             ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
-            ax_yDist.set_xlabel("#dropouts/patient",size=16);
+            ax_yDist.set_xlabel("no. of dropout signatures per patient",size=16);
             ax_yDist.set_xlim([0,mat.T.shape[1]]);
 
             if annotate==True:
@@ -917,7 +920,11 @@ class Beanie:
                     texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center',fontsize=9) for j in range(len(pats))])
 
                 adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-            
+            circ1 = mpatches.Patch(facecolor="#F34C92", alpha=0.9, linewidth=1, label='FRR below threshhold for robustness')
+            circ2 = mpatches.Patch(facecolor="#F6E0A3", alpha=0.4, linewidth=1, label='FRR above threshhold for robustness')
+            ax_main.legend(handles = [circ1,circ2], bbox_to_anchor=(1.35,1.27))
+
+
         self.patient_dropout_plot = fig
         return
 
