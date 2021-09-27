@@ -769,14 +769,14 @@ class Beanie:
             return
 
         # find number of significant digits
-        keys = sorted(bobj.de_obj.null_dist_folds.keys())
-        significant_digits = len(str(len(bobj.de_obj.null_dist_folds[keys[0]][0].p.stack().values)))-1
+        keys = sorted(self.de_obj.null_dist_folds.keys())
+        self._significant_digits = len(str(len(self.de_obj.null_dist_folds[keys[0]][0].p.stack().values)))-1
 
         # make values non-zero for taking log
         a = df_plot.corr_p.copy()
         for i in range(len(a)):
             if a[i]==0:
-                a[i] += 1/pow(10,significant_digits)
+                a[i] += 1/pow(10,self._significant_digits)
         df_plot["corr_p_modified"] = (a).astype(float)
         
         df_plot["log_corrp"] = -np.log10(df_plot["corr_p_modified"])
@@ -814,7 +814,7 @@ class Beanie:
                 axs.set_title("Statistically significant signatures")
             axs.set_ylabel("empirical p-value")
             axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
-            axs.set_ylim(bottom = -(significant_digits+1), top = significant_digits+1)
+            axs.set_ylim(bottom = -(self._significant_digits+1), top = self._significant_digits+1)
 
             circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='non-robust to subsampling')
             circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='robust to subsampling')
@@ -827,7 +827,7 @@ class Beanie:
             for p in axs.patches:
                 _x = p.get_x() + p.get_width() / 2
                 _y = p.get_y() + p.get_height()
-                if abs(_y)==significant_digits and df_plot.iloc[count,:].corr_p==0:
+                if abs(_y)==self._significant_digits and df_plot.iloc[count,:].corr_p==0:
                     if _y<0:
                         axs.text(_x, _y-0.5, "***", ha="center") 
                     else:
