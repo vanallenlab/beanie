@@ -6,7 +6,7 @@ matplotlib
 multiprocessing
 numba>=0.50.1
 numpy>=1.18.5
-pandas==1.0.0
+pandas>=1.0.0
 pyarrow>=0.11.1
 pyscenic>=0.10.4
 scanpy>=1.6.0

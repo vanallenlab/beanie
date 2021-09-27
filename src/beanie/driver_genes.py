@@ -154,10 +154,10 @@ def GenerateHeatmap(counts_matrix, t1_ids, t2_ids, d1, d2, top_genes:dict, signa
         
         # scaling each gene for plot:
         for gene in gene_names:
-            temp = np.append(df1_dict[sig_name].loc[gene,].values, df2_dict[sig_name].loc[gene,].values)
+            temp = np.append(df1_dict[sig_name].loc[gene,:].values, df2_dict[sig_name].loc[gene,:].values)
             temp_scaled = (temp-np.min(temp))/(np.max(temp)-np.min(temp))
-            df1_dict[sig_name].loc[gene,] = temp_scaled[:gr1_pats]
-            df2_dict[sig_name].loc[gene,] = temp_scaled[-gr2_pats:]
+            df1_dict[sig_name].loc[gene,:] = temp_scaled[:gr1_pats]
+            df2_dict[sig_name].loc[gene,:] = temp_scaled[-gr2_pats:]
 
     if len(sig_list_robust)==0:
         print("None of the Signatures have robust differential gene expression")
