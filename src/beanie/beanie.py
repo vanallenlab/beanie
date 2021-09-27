@@ -951,7 +951,7 @@ class Beanie:
         self.heatmap = dg.GenerateHeatmap(self.normalised_counts.T, self.t1_ids, self.t2_ids, self.d1_all, self.d2_all, self.driver_genes, signature_names, num_genes, **kwargs)
         return
         
-    def UpsetPlotDriverGenes(self, signature_names=None):
+    def UpsetPlotDriverGenes(self, fig_width=None, signature_names=None):
         """
         Function to plot intersection of driver genes between different signatures 
         (option to either enter the signature names list for which you want the plot; 
@@ -968,6 +968,9 @@ class Beanie:
             else:
                 signature_names = self.top_signatures
 
+        elif len(signature_names)>6:
+            print("Too many signature names to show upset plot")
+            
         if self._driver_genes_run==False:
             raise RuntimeEror("Run DriverGenes() first.")
             
@@ -994,10 +997,25 @@ class Beanie:
         upset_df["Intersection"] = intersection
         upset_df = upset_df.groupby(by = signature_names).sum()
         
-        self.upsetplot_driver_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality')
-        return
+        if fig_width==None:
+            if len(signature_names)==6:
+                fig_width = 25
+            elif len(signature_names)==5:
+                fig_width = 15
+            elif len(signature_names)==4:
+                fig_width = 10
+            elif len(signature_names)==3:
+                fig_width = 7
+        fig_height = 5
         
-    def UpsetPlotSignatureGenes(self, signature_names=None):
+        fig, axs = plt.subplots(1,1, figsize=(fig_width,fig_height), dpi=300)
+        self.upsetplot_driver_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality', fig=fig, element_size=None, show_counts=True)
+        axs.axis('off');
+        fig.suptitle("Overlap between top ranked genes")
+
+        return self.upsetplot_driver_genes
+        
+    def UpsetPlotSignatureGenes(self, fig_width = None, signature_names=None):
         """
         Function to plot intersection of genes in every signature.
         
@@ -1012,6 +1030,8 @@ class Beanie:
                 return
             else:
                 signature_names = self.top_signatures
+        elif len(signature_names)>6:
+            print("Too many signature names to show upset plot")
 
         upset_df = pd.DataFrame(list(product([True,False],repeat = len(signature_names))),columns=signature_names)
         intersection = list()
@@ -1025,7 +1045,23 @@ class Beanie:
                 intersection.append(0)
         upset_df["Intersection"] = intersection
         upset_df = upset_df.groupby(by = signature_names).sum()
-        self.upsetplot_signature_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality')
-        return
+        
+        if fig_width==None:
+            if len(signature_names)==6:
+                fig_width = 25
+            elif len(signature_names)==5:
+                fig_width = 15
+            elif len(signature_names)==4:
+                fig_width = 10
+            elif len(signature_names)==3:
+                fig_width = 7
+        fig_height = 5
+        
+        fig, axs = plt.subplots(1,1,figsize=(fig_width,fig_height), dpi=300)
+        self.upsetplot_signature_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality', fig=fig, element_size=None, show_counts=True)
+        axs.axis('off');
+        fig.suptitle("Overlap between gene signatures")
+        
+        return self.upsetplot_driver_genes
     
     
