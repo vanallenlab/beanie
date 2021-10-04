@@ -35,23 +35,6 @@ from .utils import *
 from pyscenic.genesig import GeneSignature
 from .scoring_aucell import aucell, create_rankings
 
-# def convert_to_csr(df: pd.DataFrame):
-#     # convert genes x cells matrix into sparse row matrix for storage.
-#     obs_names = df.columns
-#     var_names = df.index
-#     counts = sp.sparse.csr_matrix(df)
-#     return obs_names, var_names, counts
-
-# def convert_to_df(mat, var, obs):
-#     # convert to dataframe from csr_matrix
-#     return pd.DataFrame(mat.todense(), index = var, columns = obs)
-
-# def convert_to_csc(df: pd.DataFrame):
-#     # convert genes x cells matrix into sparse column matrix for storage.
-#     obs_names = df.columns.to_list()
-#     var_names = df.index.to_list()
-#     counts = sp.sparse.csc_matrix(df)
-#     return obs_names, var_names, counts
 
 class Beanie:
     
@@ -323,29 +306,34 @@ class Beanie:
         dateTimeObj = datetime.now()
         dir_name = "sig_temp_files_"+dateTimeObj.strftime("%d_%b_%Y_%H_%M_%S_%f")
         os.mkdir(dir_name)
-        self.signatures.T.to_csv("./" + dir_name + "/signatures.gmt", sep="\t", header=None)
+        
+        # convert to GMT format (add an extra description column for the gene signatures)
+        df = self.signatures.T
+        df.insert(0,"description_col","NA")
+        
+        df.to_csv("./" + dir_name + "/signatures.gmt", sep="\t", header=None)
         self._sig_path = "./" + dir_name + "/signatures.gmt"
         self._sig_path_dir = "./" + dir_name
         
         return
     
-    def GetSignatures(self,**kwargs):
-        """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
+#     def GetSignatures(self,**kwargs):
+#         """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
         
-        Parameters: 
-            msigdb_species                           species for msigdb
-            msigdb_category                          categories: chosen from H,C1,...C8
-            msigdb_subcategory                       (optional) if present, for eg in case of C2.
+#         Parameters: 
+#             msigdb_species                           species for msigdb
+#             msigdb_category                          categories: chosen from H,C1,...C8
+#             msigdb_subcategory                       (optional) if present, for eg in case of C2.
         
-        """
+#         """
         
-        if self._sig_path!=None:
-            raise RuntimeError("A signature file has already been provided.")
+#         if self._sig_path!=None:
+#             raise RuntimeError("A signature file has already been provided.")
             
-        self.signatures = GetSignaturesMsigDb(**kwargs)
-        self._writeSignatures()
+#         self.signatures = GetSignaturesMsigDb(**kwargs)
+#         self._writeSignatures()
         
-        return
+#         return
 
         
     def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):
