@@ -58,7 +58,9 @@ def GenerateNullDistributionSignatures(signature,sorted_genes,bins,no_iters=200,
     dir_name = "temp_files_"+dateTimeObj.strftime("%d_%b_%Y_%H_%M_%S_%f")
     os.mkdir(dir_name)
     for key in size_dict.keys():
-        pd.DataFrame(random_set_dict[key], index=["random_sig_"+str(i) for i in range(no_iters)]).to_csv("./" + dir_name + "/" + str(key) + ".gmt", sep="\t", header=None)
+        df = pd.DataFrame(random_set_dict[key], index=["random_sig_"+str(i) for i in range(no_iters)])
+        df.insert(0,"description_column","NA")
+        df.to_csv("./" + dir_name + "/" + str(key) + ".gmt", sep="\t", header=None)
         
     return random_set_dict,dir_name
 
