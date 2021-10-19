@@ -817,9 +817,9 @@ class Beanie:
                 _y = p.get_y() + p.get_height()
                 if abs(_y)==self._significant_digits and df_plot.iloc[count,:].corr_p==0:
                     if _y<0:
-                        axs.text(_x, _y-0.5, "***", ha="center") 
+                        axs.text(_x, _y-0.5, "***", ha="center", size=13) 
                     else:
-                        axs.text(_x, _y+0.5, "***", ha="center") 
+                        axs.text(_x, _y+0.5, "***", ha="center", size=13) 
             plt.xticks(rotation=90);
 
             self.barplot = fig
