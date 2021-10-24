@@ -322,7 +322,7 @@ def CalculateLog2FoldChangeSigScores(signature_scores,d1,d2):
     return results_df
 
 
-def CalculateSubsampleSize(metad, treatment_group_names, subsample_mode, matched_normals, **kwargs):
+def CalculateSubsampleSize(metad, group_id_names, subsample_mode, matched_normals, **kwargs):
     
     def choose_cells(group1_cells, group2_cells, group1_sample_cells, group2_sample_cells, 
              excluded_cells, excluded, subsample_mode, excluded_from_group1=True, random_state=42):
@@ -427,22 +427,22 @@ def CalculateSubsampleSize(metad, treatment_group_names, subsample_mode, matched
                     return "no"
             
             
-    t1_ids = sorted(list(set(metad[metad.treatment_group==treatment_group_names[0]].patient_id)))
-    t2_ids = sorted(list(set(metad[metad.treatment_group==treatment_group_names[1]].patient_id)))
+    t1_ids = sorted(list(set(metad[metad.group_id==group_id_names[0]].sample_id)))
+    t2_ids = sorted(list(set(metad[metad.group_id==group_id_names[1]].sample_id)))
 
     d1_all = {}
     for xid in t1_ids:
-        d1_all[xid]=sorted(metad[metad.patient_id==xid]["patient_id"].index.to_list())
+        d1_all[xid]=sorted(metad[metad.sample_id==xid]["sample_id"].index.to_list())
 #         print(xid,len(d1_all[xid]))
 
     d2_all = {}
     for xid in t2_ids:
-        d2_all[xid]=sorted(metad[metad.patient_id==xid]["patient_id"].index.to_list())
+        d2_all[xid]=sorted(metad[metad.sample_id==xid]["sample_id"].index.to_list())
 #         print(xid,len(d2_all[xid]))
 
-#     min_size = metad.patient_id.value_counts()[-1]
+#     min_size = metad.sample_id.value_counts()[-1]
     min_size = 1
-    max_size = metad.patient_id.value_counts()[0]
+    max_size = metad.sample_id.value_counts()[0]
     mid_size = int((min_size+max_size)/2)
     cache=0
     

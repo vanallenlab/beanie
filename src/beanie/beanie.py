@@ -52,7 +52,7 @@ class Beanie:
             self.counts                       (genes x cells) counts matrix in .csv format
             self.normalised_counts            CPM and log-transformation of counts
             self.signatures                   file containing all the signature names and corresponding genes with header as signature names
-            self.metad                        (cells x columns) metadata file containing columns for 'treatment_group', 'patient_id'
+            self.metad                        (cells x columns) metadata file containing columns for 'group_id', 'sample_id'
             self.signature_scores             (cells x signature_scores) matrix
             self.driver_genes                 dictionary of driver genes (default=10) for every signature
             self.subsampled_stats             dataframe storing the final results of subsampling procedure
@@ -71,7 +71,7 @@ class Beanie:
             self.d1_all                       dictionary mapping patients to cell_ids in treatment group A
             self.d2_all                       dictionary mapping patients to cell_ids in treatment group B
             self.max_subsample_size
-            self.treatment_group_names        list of treatment groups names in self.metad
+            self.group_id_names        list of treatment groups names in self.metad
             self.top_signatures               top 5 most significant and robust genes
             self.num_driver_genes             number of driver genes for which plots to be made
             self.t1_cells
@@ -148,23 +148,23 @@ class Beanie:
         
         # Check if metadata file is in the correct format
         # check if the header has correct columns needed.
-        if np.sum(self.metad.columns.isin(['treatment_group','patient_id']))!=2:
-            raise IOError("Please check input format for meta data file. 'treatment_group','patient_id' columns should be present.")
+        if np.sum(self.metad.columns.isin(['group_id','sample_id']))!=2:
+            raise IOError("Please check input format for meta data file. 'group_id','sample_id' columns should be present.")
 
         # check that number of treatment groups are 2
-        self.treatment_group_names = sorted(set(self.metad.treatment_group))
+        self.group_id_names = sorted(set(self.metad.group_id))
                 
-        if len(self.treatment_group_names)<2:
+        if len(self.group_id_names)<2:
             raise IOError("Atleast two treatment groups required.")
-        elif len(self.treatment_group_names)>2:
+        elif len(self.group_id_names)>2:
             raise IOError("The method is not currently supported for more than two treatment groups.")
 #         else:
-#             if test_direction not in self.treatment_group_names:
+#             if test_direction not in self.group_id_names:
 #                 raise IOError("Check input parameter test_direction. ")
 #             else:
 #                 self.group_direction = test_direction
-#                 if test_direction!=self.treatment_group_names[0]:
-#                     self.treatment_group_names.reverse()
+#                 if test_direction!=self.group_id_names[0]:
+#                     self.group_id_names.reverse()
         
         if sig_path!= None:
             print("Reading signature file...")
@@ -247,40 +247,40 @@ class Beanie:
         
         # check if matched normals, then both groups have same patients
         if self._matched_normals==True:
-            p1 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[0],"patient_id"])
-            p2 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[1],"patient_id"])
+            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
             if p1!=p2:
                 raise IOError("Cells are not provided for each sample in both groups.")
         #check if there are any overlapping samples in the two treatment groups
         elif self._matched_normals==False:
-            p1 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[0],"patient_id"])
-            p2 = set(self.metad.loc[self.metad.treatment_group==self.treatment_group_names[1],"patient_id"])
+            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
             if len(p1.intersection(p2))!=0:
-                raise IOError("Same patient_id present in both groups.")
+                raise IOError("Same sample_id present in both groups.")
             
         # remove patients with cells < 20
 #         min_cells = 20
         
-        cell_counts = self.metad.patient_id.value_counts()
+        cell_counts = self.metad.sample_id.value_counts()
         pats_below_threshhold = cell_counts[cell_counts<min_cells].index.to_list()
         if len(pats_below_threshhold)!=0:
             print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed:", pats_below_threshhold)
-            self.metad = self.metad[~self.metad.patient_id.isin(pats_below_threshhold)]
+            self.metad = self.metad[~self.metad.sample_id.isin(pats_below_threshhold)]
             self.counts = self.counts[self.metad.index]
             
-        self.t1_ids = sorted(list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[0]].patient_id)))
-        self.t2_ids = sorted(list(set(self.metad[self.metad.treatment_group==self.treatment_group_names[1]].patient_id)))
+        self.t1_ids = sorted(list(set(self.metad[self.metad.group_id==self.group_id_names[0]].sample_id)))
+        self.t2_ids = sorted(list(set(self.metad[self.metad.group_id==self.group_id_names[1]].sample_id)))
         
         self.d1_all = {}
         for xid in self.t1_ids:
-            self.d1_all[xid]=sorted(self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list())
+            self.d1_all[xid]=sorted(self.metad[self.metad.sample_id==xid]["sample_id"].index.to_list())
             
         self.d2_all = {}
         for xid in self.t2_ids:
-            self.d2_all[xid]=sorted(self.metad[self.metad.patient_id==xid]["patient_id"].index.to_list())
+            self.d2_all[xid]=sorted(self.metad[self.metad.sample_id==xid]["sample_id"].index.to_list())
             
-        self.t1_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[0]].index.to_list()
-        self.t2_cells = self.metad[self.metad.treatment_group == self.treatment_group_names[1]].index.to_list()    
+        self.t1_cells = self.metad[self.metad.group_id == self.group_id_names[0]].index.to_list()
+        self.t2_cells = self.metad[self.metad.group_id == self.group_id_names[1]].index.to_list()    
         
         if normalised==False:
             print("Normalising counts...")
@@ -290,9 +290,9 @@ class Beanie:
             
             
         print("Calculating maximum subsample size...")
-        self.max_subsample_size = CalculateSubsampleSize(self.metad, self.treatment_group_names, self.subsample_mode, self._matched_normals)
-#         self.max_subsample_size = self.metad.patient_id.value_counts()[-1]
-        self.n_subsamples = min(int(self.metad.patient_id.value_counts()[0]/self.metad.patient_id.value_counts()[-1]),100)
+        self.max_subsample_size = CalculateSubsampleSize(self.metad, self.group_id_names, self.subsample_mode, self._matched_normals)
+#         self.max_subsample_size = self.metad.sample_id.value_counts()[-1]
+        self.n_subsamples = min(int(self.metad.sample_id.value_counts()[0]/self.metad.sample_id.value_counts()[-1]),100)
         
         
         print("************************************************************")
@@ -497,10 +497,10 @@ class Beanie:
 
 #         subsamples = self.n_subsamples
         if group_direction!=None:
-            if group_direction not in self.treatment_group_names:
+            if group_direction not in self.group_id_names:
                 raise IOError("The group_direction entered is not in the treatment groups. Please check group_direction.")
         else:
-            group_direction = self.treatment_group_names[0]
+            group_direction = self.group_id_names[0]
                 
         sig_size_dict = {x:max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins) for x in self.signatures.columns}
         if self._matched_normals == False:
@@ -574,7 +574,7 @@ class Beanie:
         # calculate other stats
         results_df = CalculateLog2FoldChangeSigScores(self.signature_scores, self.d1_all, self.d2_all)
         self.de_summary = pd.concat([results_df,self.de_summary], axis=1, sort=False)
-        self.de_summary["direction"] = [self.treatment_group_names[0] if x==True else self.treatment_group_names[1] for x in self.de_summary.direction]
+        self.de_summary["direction"] = [self.group_id_names[0] if x==True else self.group_id_names[1] for x in self.de_summary.direction]
 
         # calculate the robust signatures in direction of interest: by default gr1 
         self._candidate_robust_sigs_df = self.de_summary[(self.de_summary.direction==group_direction) & (self.de_summary.nonrobust==False) & (self.de_summary.corr_p<=0.05)]
@@ -604,13 +604,13 @@ class Beanie:
             raise RuntimeError("Run DifferentialExpression() first.")
 
         if group_direction!=None:
-            if group_direction not in self.treatment_group_names:
+            if group_direction not in self.group_id_names:
                 raise IOError("The group_direction entered is not in the treatment groups. Please check group_direction.")
         else:
-            group_direction = self.treatment_group_names[0]
+            group_direction = self.group_id_names[0]
                     
         for x in tqdm(self.signatures.columns):
-            if group_direction==self.treatment_group_names[0]:
+            if group_direction==self.group_id_names[0]:
                 if self.de_summary.loc[x,"direction"]==group_direction:
                     self.driver_genes[x] = dg.FindDriverGenes(x, self.signature_scores, self.normalised_counts.T, self.signatures[x].dropna().values, self.d1_all, self.d2_all)
                 else:
@@ -768,7 +768,7 @@ class Beanie:
         df_plot["corr_p_modified"] = (a).astype(float)
         
         df_plot["log_corrp"] = -np.log10(df_plot["corr_p_modified"])
-        df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.treatment_group_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
+        df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.group_id_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
         df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
         size = df_plot.shape[0]
 
@@ -806,8 +806,8 @@ class Beanie:
 
             circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='non-robust to subsampling')
             circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='robust to subsampling')
-            circ3 = mpatches.Patch(facecolor=color_gr1, label='enriched in '+self.treatment_group_names[0])
-            circ4 = mpatches.Patch(facecolor=color_gr2, label='enriched in '+self.treatment_group_names[1])
+            circ3 = mpatches.Patch(facecolor=color_gr1, label='enriched in '+self.group_id_names[0])
+            circ4 = mpatches.Patch(facecolor=color_gr2, label='enriched in '+self.group_id_names[1])
             axs.legend(handles = [circ1,circ2,circ3,circ4], bbox_to_anchor=(1.01, 1), loc='upper left')
 
             # Add *** above bars which have p-val<1/significant_digits
