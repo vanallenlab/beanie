@@ -23,4 +23,7 @@ python v3.6 and above (<= 3.8)
 
 ## Citation
 
-If you use our package, please cite the preprint: Johri S., Bi K., Fu J., Titchen B., Conway J., Crowdis J., Vokes N., Fan Z, Fong L., Park J., Liu D., He MX., Van Allen E. (2021) Dissecting tumor cellprograms through group biology estimation in clinical single cell transcriptomics. biorxiv.
+If you use our package, please cite the preprint: 
+
+
+>Johri S., Bi K., Fu J., Titchen B., Conway J., Crowdis J., Vokes N., Fan Z, Fong L., Park J., Liu D., He MX., Van Allen E. (2021) Dissecting tumor cellprograms through group biology estimation in clinical single cell transcriptomics. biorxiv.
