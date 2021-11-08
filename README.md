@@ -16,9 +16,26 @@ To install via github:
 pip install git+https://github.com/sjohri20/beanie.git
 ```
 
+## Setting up a virtual environment
+
+```
+# Create conda environment
+conda create --name env_name python=3.6
+
+# Activate conda environment
+conda activate env_name
+
+# Install jupyter-notebook and widgets
+conda install -c condo-forge notebook
+conda install -c conda-forge ipywidgets
+jupyter nbextension enable --py widgetsnbextension
+jupyter notebook --generate-config
+```
+
 ## Software Requirements
 
-python v3.6 and above (<= 3.8)
+- python v3.6 and above (<= 3.8).
+- Java v1.8 and above.
 
 
 ## Citation
