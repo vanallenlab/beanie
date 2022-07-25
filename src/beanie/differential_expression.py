@@ -284,8 +284,11 @@ class ExcludeSampleSubsampledDE:
         else:
             warnings.warn('Group 2 only has 1 sample, which will not be dropped in any iteration')
         if not exclusions:
-            raise ValueError('Neither group has more than one sample, cannot subsample.')
+            self._flag_sample = 1
+        else:
+            self._flag_sample = 0
         
+        print("Creating groups of subsampled cells from every patient for bootstrapping") 
         # when no sample is excluded
         self.folds.append(ExcludeSampleFold(expression,
                                             group1_cells,
@@ -299,22 +302,22 @@ class ExcludeSampleSubsampledDE:
                                             "NONE",
                                             test_name = test_name,
                                             test_alternative=test_alternative))
+        if self._flag_sample==0:
+            for excluded in sorted(exclusions):
+                self.folds.append(ExcludeSampleFold(expression,
+                                                    {x: y for x, y in group1_cells.items() if x != excluded},
+                                                    {x: y for x, y in group2_cells.items() if x != excluded},
+                                                    subsample_mode,
+                                                    group1_sample_cells,
+                                                    group2_sample_cells,
+                                                    samples_per_fold,
+                                                    len({**group1_cells, **group2_cells}[excluded]),
+                                                    excluded in group1_cells,
+                                                    excluded,
+                                                    test_name = test_name,
+                                                    test_alternative=test_alternative))
         
-        for excluded in sorted(exclusions):
-            self.folds.append(ExcludeSampleFold(expression,
-                                                {x: y for x, y in group1_cells.items() if x != excluded},
-                                                {x: y for x, y in group2_cells.items() if x != excluded},
-                                                subsample_mode,
-                                                group1_sample_cells,
-                                                group2_sample_cells,
-                                                samples_per_fold,
-                                                len({**group1_cells, **group2_cells}[excluded]),
-                                                excluded in group1_cells,
-                                                excluded,
-                                                test_name = test_name,
-                                                test_alternative=test_alternative))
-            
-        
+        print("Preparing null distribution per signature score size bucket for bootstrapping...")
         for key in null_dist_dict.keys():
             res = []
             np.random.seed(random_state)
@@ -331,19 +334,20 @@ class ExcludeSampleSubsampledDE:
                                         test_name = test_name,
                                         test_alternative=test_alternative))
             
-            for excluded in sorted(exclusions):
-                res.append(ExcludeSampleFold(null_dist_dict[key].T,
-                                        {x: y for x, y in group1_cells.items() if x != excluded},
-                                        {x: y for x, y in group2_cells.items() if x != excluded},
-                                        subsample_mode,
-                                        group1_sample_cells,
-                                        group2_sample_cells,
-                                        samples_per_fold,
-                                        len({**group1_cells, **group2_cells}[excluded]),
-                                        excluded in group1_cells,
-                                        excluded,
-                                        test_name = test_name,
-                                        test_alternative=test_alternative))
+            if self._flag_sample==0:
+                for excluded in sorted(exclusions):
+                    res.append(ExcludeSampleFold(null_dist_dict[key].T,
+                                            {x: y for x, y in group1_cells.items() if x != excluded},
+                                            {x: y for x, y in group2_cells.items() if x != excluded},
+                                            subsample_mode,
+                                            group1_sample_cells,
+                                            group2_sample_cells,
+                                            samples_per_fold,
+                                            len({**group1_cells, **group2_cells}[excluded]),
+                                            excluded in group1_cells,
+                                            excluded,
+                                            test_name = test_name,
+                                            test_alternative=test_alternative))
             self.null_dist_folds[key] = res
             
         self.has_run = False
@@ -352,9 +356,11 @@ class ExcludeSampleSubsampledDE:
     def run(self, random_seed=42):
         if not self.has_run:
             np.random.seed(random_seed)
+            print("Generating p-value distribution for fold...")
             for fold in tqdm(self.folds):
                 fold.run()
 
+            print("Generating backgroud distribution for every signature score size bucket...")
             for k in tqdm(self.null_dist_folds.keys()):
                 for fold in self.null_dist_folds[k]:
                     fold.run()
@@ -365,12 +371,14 @@ class ExcludeSampleSubsampledDE:
             corr_p = pd.DataFrame(index = p.index, columns = p.columns)
             df_fold_list = np.array_split(p, len(self.group1_cells.keys())+len(self.group2_cells.keys()), axis=1)
             significant_digits=0
+            
+            print("Calculating empirical p-values...")
             for ind in tqdm(range(len(p.index))):
                 key = self.sig_size_dict[p.index[ind]]
                 df_random = p_dict[key]
                 temp = []
                 for df_fold in df_fold_list:
-                    fold_name = df_fold.columns[0].split("_")[0]
+                    fold_name = "_".join(df_fold.columns[0].split("_")[:-1])  # to ensure that if the patient name contains "_" it doesn't get dissected because of subsample suffix
                     vec_random_dist = df_random.loc[:,df_random.columns.str.contains(fold_name)].stack().values
                     significant_digits = len(str(len(vec_random_dist)))-1
                     # also round off to significant digits while calculating percentile per subsample
@@ -473,20 +481,24 @@ class ExcludeSampleSubsampledDE:
 
         base_rejection_rate = (self.folds[0].corr_p.values < alpha).mean(axis=1)
     
-        for fold in self.folds[1:]:
-            fold_rejection_rate = (fold.corr_p.values < alpha).mean(axis=1)
-#             other_p = pd.concat([f.corr_p for f in self.folds if f != fold], axis=1, sort=False).values
-#             other_direction = pd.concat([f.effect for f in self.folds if f != fold], axis=1, sort=False).values >= 0.5
-#             other_fold_rejection_rate = (other_p < alpha).mean(axis=1)
-            with np.errstate(divide='ignore', invalid='ignore'):
-                x = np.divide(fold_rejection_rate, base_rejection_rate)
-                x[np.isinf(x)] = 0
-                x[np.isnan(x)] = 1
-                summary[f'excluded_{fold.name}'] = x
-                
-        summary['nonrobust'] = (summary.loc[:,summary.columns.str.contains("excluded_")] < min_ratio).any(axis=1)
+        if self._flag_sample==0:
+            for fold in self.folds[1:]:
+                fold_rejection_rate = (fold.corr_p.values < alpha).mean(axis=1)
+    #             other_p = pd.concat([f.corr_p for f in self.folds if f != fold], axis=1, sort=False).values
+    #             other_direction = pd.concat([f.effect for f in self.folds if f != fold], axis=1, sort=False).values >= 0.5
+    #             other_fold_rejection_rate = (other_p < alpha).mean(axis=1)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    x = np.divide(fold_rejection_rate, base_rejection_rate)
+                    x[np.isinf(x)] = 0
+                    x[np.isnan(x)] = 1
+                    summary[f'excluded_{fold.name}'] = x
 
-        return summary.sort_values(['statistic', 'nonrobust'])
+            summary['nonrobust'] = (summary.loc[:,summary.columns.str.contains("excluded_")] < min_ratio).any(axis=1)
+
+            return summary.sort_values(['statistic', 'nonrobust'])
+        else:
+            summary.sort_values(['statistic'])
+            
 
 class ExcludeSampleSubsampledDENoCorrection:
     def __init__(self, expression: pd.DataFrame, group1_cells: dict, group2_cells: dict, subsample_mode: str,
