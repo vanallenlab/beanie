@@ -2,10 +2,8 @@ import warnings
 
 from tqdm.auto import tqdm
 
-from shutil import rmtree
 import os
-
-from datetime import datetime
+import logging
 
 import pandas as pd
 import numpy as np
@@ -32,26 +30,38 @@ from . import differential_expression as de
 
 from .utils import *
 
-from pyscenic.genesig import GeneSignature
+from ctxcore.genesig import GeneSignature
 from .scoring_aucell import aucell, create_rankings
 
 
+# helper functions
+
+def exists(val):
+    return val is not None
+
+
+# BEANIE class
 class Beanie:
     
-    def __init__(self, counts_path: str, metad_path: str, normalised:bool, sig_path=None, sig_score_path = None, subsample_mode = "equal", matched_normals=False, bin_size=10, min_cells=20, **kwargs):
+    def __init__(self, counts_path: str, metad_path: str, sig_path:str, normalised:bool, subsample_mode = "equal", matched_normals=False, bins=False, bin_size=None, min_cells=20, output_dir="./beanie_out/", **kwargs):
         """
         
         Parameters:
-            counts_path                       path to counts matrix
-            metad_path                        path to the metadata
+            counts_path                       path to counts matrix; must be (genes x cells) in .csv, .tsv or .h5ad format 
+            metad_path                        path to the metadata; must contain 'group_id' and 'sample_id' columns; must be in .csv or .tsv format
+            sig_path                          path to the file containing gene signatures. Must be .csv, .tsv or .gmt
             normalised                        boolean variable for indicating whether the matrix is normalised or not
-            sig_path                          path to the signature file containing
-            sig_score_path                    path to signature_scores
+            subsample_mode                    should be either "equal" or "max"
+            matched_normals                   whether samples in the one of the groups are matched normals
+            bins                              whether binning should be done for generating background gene signatures
+            bin_size                          only applicable if bins=True. integer indicating size of bins
+            min_cells                         minimum threshold for number of cells below which patients should be excluded from analysis
+            output_dir                        directory for storing intermediate results
             
         Attributes:
-            self.counts                       (genes x cells) counts matrix in .csv format
-            self.normalised_counts            CPM and log-transformation of counts
+            self.normalised_counts            (genes x cells) CPM normalised and log-transformed counts
             self.signatures                   file containing all the signature names and corresponding genes with header as signature names
+            self.out                          output directory for intermediate results
             self.metad                        (cells x columns) metadata file containing columns for 'group_id', 'sample_id'
             self.signature_scores             (cells x signature_scores) matrix
             self.driver_genes                 dictionary of driver genes (default=10) for every signature
@@ -92,56 +102,54 @@ class Beanie:
         if not os.path.exists(metad_path):
             raise FileNotFoundError("Meta data file does not exist. Please check metad_path.")
         
-        if sig_path!=None:
-            if not os.path.exists(sig_path):
-                raise FileNotFoundError("Signature file does not exist. Please check sig_path.")
-                
-        if sig_score_path!=None:
-            if not os.path.exists(sig_score_path):
-                raise FileNotFoundError("Signature scores file does not exist. Please check sig_score_path.")
-                
+        if not os.path.exists(sig_path):
+            raise FileNotFoundError("Gene signatures file does not exist. Please check sig_path.")
+         
+        if subsample_mode not in list(["equal", "max"]):
+            raise IOError("subsample_mode must be one of 'max' or 'equal'.")
+        
         ### Read counts matrix
-        print("Reading counts matrix...")
+        logging.info("Reading counts matrix...")
         if counts_path.endswith(".csv"):
-            self.counts = pd.read_csv(counts_path, index_col=0, sep=",")
-#             self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts) 
+            counts = pd.read_csv(counts_path, index_col=0, sep=",")
+            
         elif counts_path.endswith(".tsv"):
-            self.counts = pd.read_csv(counts_path, index_col=0, sep="\t")
-#             self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+            counts = pd.read_csv(counts_path, index_col=0, sep="\t")
+            
         elif counts_path.endswith(".h5ad"):
             sc_obj = sc.read(counts_path)
             if sc_obj.raw==None:
                 if issparse(sc_obj.X):
-                    self.counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
-#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                    counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
                 else:
-                    self.counts = pd.DataFrame(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
-#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                    counts = pd.DataFrame(sc_obj.X, index=sc_obj.obs_names, columns=sc_obj.var_names).T
             else:
                 if issparse(sc_obj.raw.X):
-                    self.counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
-#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                    counts = pd.DataFrame.sparse.from_spmatrix(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
                 else:
-                    self.counts = pd.DataFrame(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
-#                     self.obs_names, self.var_names, self.counts = convert_to_csr(self.counts)
+                    counts = pd.DataFrame(sc_obj.raw.X, index=sc_obj.raw.obs_names, columns=sc_obj.raw.var_names).T
         else:
             raise OSError("Counts matrix should be of the format .csv or .tsv, or a scanpy object .h5ad")
 
         # check that the index is not numbers
-        if self.counts.index.dtype=="int64":
+        if counts.index.dtype=="int64":
             raise OSError("Counts matrix format wrong. Please check.")
 
         
         ### Read meta data file
-        print("Reading meta data file...")
+        logging.info("Reading meta data file...")
         if metad_path.endswith(".csv"):
             self.metad = pd.read_csv(metad_path, index_col=0, sep=",")
             try:
-                self.metad = self.metad.loc[self.counts.columns,:]
+                self.metad = self.metad.loc[counts.columns,:]
             except:
                 raise IOError("The cell ids in counts matrix and meta data file should match.")
         elif metad_path.endswith(".tsv"):
             self.metad = pd.read_csv(metad_path, index_col=0, sep="\t")
+            try:
+                self.metad = self.metad.loc[counts.columns,:]
+            except:
+                raise IOError("The cell ids in counts matrix and meta data file should match.")
         else:
             raise OSError("Meta data should be of the format .csv or .tsv")
 
@@ -158,16 +166,11 @@ class Beanie:
             raise IOError("Atleast two treatment groups required.")
         elif len(self.group_id_names)>2:
             raise IOError("The method is not currently supported for more than two treatment groups.")
-#         else:
-#             if test_direction not in self.group_id_names:
-#                 raise IOError("Check input parameter test_direction. ")
-#             else:
-#                 self.group_direction = test_direction
-#                 if test_direction!=self.group_id_names[0]:
-#                     self.group_id_names.reverse()
         
-        if sig_path!= None:
-            print("Reading signature file...")
+        self.output_dir = output_dir
+        
+        if exists(sig_path):
+            logging.info("Reading signature file...")
             if sig_path.endswith(".csv"):
                 self.signatures = pd.read_csv(sig_path, index_col=0, sep=",")
                 self._writeSignatures()
@@ -192,57 +195,26 @@ class Beanie:
             else:
                 raise IOError("Signature file should be of the format .csv or .tsv or .gmt")
 
-        # If signatures have to be extracted from MsigDb
         else:
-            self._sig_path=None
-                
-
-        # Read signature scores file
-        if sig_score_path!=None:
-            self._sig_score_path=sig_score_path
+            raise IOError("File containing signature scores must be provided.")
             
-            if self._sig_path==None:
-                raise OSError("Path to signature file must be provided with signature scores. Please input sig_path.")
-            else:
-                print("Reading signature scores...")
-                if sig_score_path.endswith(".csv"):
-                    self.signature_scores = pd.read_csv(sig_score_path, index_col=0, sep=",")
-                elif sig_score_path.endswith(".tsv"):
-                    self.signature_scores = pd.read_csv(sig_score_path, index_col=0, sep="\t")
-                else:
-                    raise IOError("Signature score file should be of the format .csv or .tsv")
-
-                # check if self.signature_scores has the same cell ids as self.normalised_counts
-                if set(self.signature_scores.index) != set(self.counts.columns):
-                    raise IOError("The cell ids in counts matrix and signature scores matrix should match.")
-                
-                # check if self.signature_scores has the same signature names as self.signatures
-                if set(self.signature_scores.columns) != set(self.signatures.columns):
-                    raise IOError("The signature names in signature matrix and signature scores matrix should match.")
-
-        else:
-            self._sig_score_path = None
-        
-    
         self.driver_genes = dict()
-#         self.subsampled_stats = None
-#         self.confidence_de_plot = None
-#         self.barplot = None
-#         self.beeswarmplot = None
-#         self.heatmap = None
-#         self.upsetplot_driver_genes = None
-#         self.upsetplot_signature_genes = None
-#         self.de_obj = None
-#         self.de_summary = None
-#         self.de_obj_simulation = list()
-#         self.de_summary_simulation = list()
-#         self.top_signatures=None
         self.num_driver_genes=10
-#         self.patient_dropout_plot=None  
         self.subsample_mode = subsample_mode
         self._differential_expression_run=False
         self._driver_genes_run=False
-        self._bins = bin_size
+        
+        if bins==True:
+            if exists(bin_size):
+                if type(bin_size) is int:
+                    self._bins = bin_size
+                else:
+                    raise IOError("bin_size must be an integer.")
+            else:
+                raise IOError("bin_size must be provided if bins=True.")
+        else:
+            self._bins=None
+                
         self._matched_normals = matched_normals
         
         # check if matched normals, then both groups have same patients
@@ -251,6 +223,7 @@ class Beanie:
             p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
             if p1!=p2:
                 raise IOError("Cells are not provided for each sample in both groups.")
+                
         #check if there are any overlapping samples in the two treatment groups
         elif self._matched_normals==False:
             p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
@@ -259,14 +232,12 @@ class Beanie:
                 raise IOError("Same sample_id present in both groups.")
             
         # remove patients with cells < 20
-#         min_cells = 20
-        
         cell_counts = self.metad.sample_id.value_counts()
         pats_below_threshhold = cell_counts[cell_counts<min_cells].index.to_list()
         if len(pats_below_threshhold)!=0:
             print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed:", pats_below_threshhold)
             self.metad = self.metad[~self.metad.sample_id.isin(pats_below_threshhold)]
-            self.counts = self.counts[self.metad.index]
+            counts = counts[self.metad.index]
             
         self.t1_ids = sorted(list(set(self.metad[self.metad.group_id==self.group_id_names[0]].sample_id)))
         self.t2_ids = sorted(list(set(self.metad[self.metad.group_id==self.group_id_names[1]].sample_id)))
@@ -283,57 +254,41 @@ class Beanie:
         self.t2_cells = self.metad[self.metad.group_id == self.group_id_names[1]].index.to_list()    
         
         if normalised==False:
-            print("Normalising counts...")
-            self.normalised_counts = CPMNormalisationLogScaling(self.counts)
+            logging.info("Normalising counts...")
+            self.normalised_counts = CPMNormalisationLogScaling(counts)
         else:
-            self.normalised_counts = self.counts
+            self.normalised_counts = counts
             
             
-        print("Calculating maximum subsample size...")
+        logging.info("Calculating maximum subsample size...")
         self.max_subsample_size = CalculateSubsampleSize(self.metad, self.group_id_names, self.subsample_mode, self._matched_normals)
 #         self.max_subsample_size = self.metad.sample_id.value_counts()[-1]
         self.n_subsamples = min(int(self.metad.sample_id.value_counts()[0]/self.metad.sample_id.value_counts()[-1]),100)
         
-        
-        print("************************************************************")
-    
+        # REMOVE FOR FINAL UPLOAD
+        self.signature_scores = None
+        self._null_dist_scores = dict()
+            
     def _writeSignatures(self):
         """Function to write signatures to a temporary file (.gmt) if they are of .csv/.tsv format. 
         Needed for beanie scoring.
         
         """
         
-        dateTimeObj = datetime.now()
-        dir_name = "sig_temp_files_"+dateTimeObj.strftime("%d_%b_%Y_%H_%M_%S_%f")
-        os.mkdir(dir_name)
+        dir_name = self.output_dir
+        
+        if not os.path.exists(dir_name):
+            os.mkdir(dir_name)
         
         # convert to GMT format (add an extra description column for the gene signatures)
         df = self.signatures.T
         df.insert(0,"description_col","NA")
         
-        df.to_csv("./" + dir_name + "/signatures.gmt", sep="\t", header=None)
-        self._sig_path = "./" + dir_name + "/signatures.gmt"
-        self._sig_path_dir = "./" + dir_name
+        df.to_csv(dir_name + "/signatures.gmt", sep="\t", header=None)
+        self._sig_path = dir_name + "/signatures.gmt"
+        self._sig_path_dir = dir_name
         
         return
-    
-#     def GetSignatures(self,**kwargs):
-#         """Function to get signatures from MsigDB (http://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp).
-        
-#         Parameters: 
-#             msigdb_species                           species for msigdb
-#             msigdb_category                          categories: chosen from H,C1,...C8
-#             msigdb_subcategory                       (optional) if present, for eg in case of C2.
-        
-#         """
-        
-#         if self._sig_path!=None:
-#             raise RuntimeError("A signature file has already been provided.")
-            
-#         self.signatures = GetSignaturesMsigDb(**kwargs)
-#         self._writeSignatures()
-        
-#         return
 
         
     def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):
@@ -348,30 +303,24 @@ class Beanie:
         """
         
         self._scoring_method = scoring_method
-        
-        # Check if signature file exists
-        if self._sig_path==None:
-            raise IOError("Signature file must be provided or signatures must be retrived from MSigDb using GetSignatures().")
-        
-        # Check if signature scores already exist..
-        if self._sig_score_path!=None:
-            raise IOError("A signature scores file has already been provided.")
-               
-        print("Scoring signatures...")
+                       
+        logging.info("Scoring signatures...")
              
         # Score background signatures
         sorted_genes = pd.Series.sort_values(self.normalised_counts.sum(axis=1))
-        self._null_dist_sigs, self._null_dist_sigs_dir = GenerateNullDistributionSignatures(self.signatures, sorted_genes, self._bins, no_random_sigs)
+        null_dist_sigs = GenerateNullDistributionSignatures(self.signatures, sorted_genes, self._bins, self.output_dir, no_random_sigs)
         self._null_dist_scores = dict()
         
         if scoring_method=="beanie":
             self._auc_cutoff = pd.Series(np.count_nonzero(self.normalised_counts.T, axis=1)).quantile(aucell_quantile)/self.normalised_counts.T.shape[1]
             signatures = GeneSignature.from_gmt(self._sig_path, field_separator='\t', gene_separator='\t')
-            self._rnk_mtx = create_rankings(self.normalised_counts.T, seed=3120)
-            self.signature_scores = aucell(self._rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=multiprocessing.cpu_count())
-            if self._sig_path.find("sig_temp_files")!=-1:
-                rmtree(self._sig_path_dir)
-            self._NullDistScoring()
+            rnk_mtx = create_rankings(self.normalised_counts.T, seed=3120)
+            self.signature_scores = aucell(rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=multiprocessing.cpu_count())
+            
+            for key in tqdm(null_dist_sigs.keys()):
+                signatures = GeneSignature.from_gmt(os.path.join(self.output_dir,"bg_signatures_" + str(key) + ".gmt"), field_separator='\t', gene_separator='\t')
+                self._null_dist_scores[key] = aucell(rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=multiprocessing.cpu_count())
+
 
 #         elif scoring_method=="znorm":
 #             self.signature_scores = SignatureScoringZNormalised(self.normalised_counts, self.signatures, multiprocessing.cpu_count())
@@ -379,8 +328,6 @@ class Beanie:
 #                 self._null_dist_scores[key] = SignatureScoringZNormalised(self.normalised_counts,
 #                                                               pd.DataFrame(self._null_dist_sigs[key],
 #                                                                            index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-            
-#             self._NullDistScoring()
                                                                            
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
@@ -388,9 +335,7 @@ class Beanie:
                 self._null_dist_scores[key] = SignatureScoringMean(self.normalised_counts,
                                                               pd.DataFrame(self._null_dist_sigs[key],
                                                                            index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-            if self._sig_path.find("sig_temp_files")!=-1:
-                rmtree(self._sig_path_dir)
-            self._NullDistScoring()
+
                      
         elif scoring_method=="combined-z":
             self.signature_scores = SignatureScoringCombinedZScore(self.normalised_counts,self.signatures)
@@ -398,65 +343,12 @@ class Beanie:
                 self._null_dist_scores[key] = SignatureScoringCombinedZScore(self.normalised_counts,
                                                               pd.DataFrame(self._null_dist_sigs[key],
                                                                            index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-            if self._sig_path.find("sig_temp_files")!=-1:
-                rmtree(self._sig_path_dir)
-            self._NullDistScoring()
+
             
         else:
             raise ValueError("Please choose scoring method from: 'beanie', 'mean', 'combined-z'.")
 
-        return
-    
-    def _NullDistScoring(self):
-        
-        """
-        Scoring the null distribution with method chosen for signature scoring. Only used when a signature_scores file is not provided.
-        
-        """
-        
-        if self._sig_score_path!=None:
-            return
-        
-        print("Scoring Background distribution")
-        
-        if self._scoring_method=="beanie":
-#             n_cores = multiprocessing.cpu_count()
-            
-#             def paralleliseNullDistScoring(key):
-#                 signatures = GeneSignature.from_gmt("./"+self._null_dist_sigs_dir+"/"+str(key)+".gmt", field_separator='\t', gene_separator='\t')
-#                 return (key, aucell(self._rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=1))
-                
-#             self._null_dist_scores = dict(Parallel(n_jobs=multiprocessing.cpu_count())(delayed(paralleliseNullDistScoring)(key) for key in self._null_dist_sigs.keys()))  
-            
-            for key in tqdm(self._null_dist_sigs.keys()):
-                signatures = GeneSignature.from_gmt("./"+self._null_dist_sigs_dir+"/"+str(key)+".gmt", field_separator='\t', gene_separator='\t')
-                self._null_dist_scores[key] = aucell(self._rnk_mtx, signatures, auc_threshold=self._auc_cutoff, num_workers=multiprocessing.cpu_count())
-
-            rmtree(self._null_dist_sigs_dir)
-
-            
-#         elif self.scoring_method=="znorm":
-#             for key in tqdm(self._null_dist_sigs.keys()):
-#                 self._null_dist_scores[key] = SignatureScoringZNormalised(self.normalised_counts,
-#                                                               pd.DataFrame(self._null_dist_sigs[key],
-#                                                                            index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-#             rmtree(self._null_dist_sigs_dir)
-                                                                           
-        elif self._scoring_method=="mean":
-            for key in tqdm(self._null_dist_sigs.keys()):
-                self._null_dist_scores[key] = SignatureScoringMean(self.normalised_counts,
-                                                              pd.DataFrame(self._null_dist_sigs[key],
-                                                                           index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-            rmtree(self._null_dist_sigs_dir)
-                     
-        elif self._scoring_method=="combined-z":
-            for key in tqdm(self._null_dist_sigs.keys()):
-                self._null_dist_scores[key] = SignatureScoringCombinedZScore(self.normalised_counts,
-                                                              pd.DataFrame(self._null_dist_sigs[key],
-                                                                           index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
-            rmtree(self._null_dist_sigs_dir)
-                
-        return        
+        return      
                 
         
     def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, test_name="mwu-test", group_direction = None, **kwargs):
@@ -473,6 +365,10 @@ class Beanie:
             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
         
         """
+        if self._differential_expression_run==True:
+            print("DifferentialExpression has already been run.")
+            return
+        
         self._alpha = alpha
         self._min_ratio = min_ratio
         
@@ -495,14 +391,17 @@ class Beanie:
             cells_to_subsample_2 = self.max_subsample_size    
         
 
-#         subsamples = self.n_subsamples
         if group_direction!=None:
             if group_direction not in self.group_id_names:
                 raise IOError("The group_direction entered is not in the treatment groups. Please check group_direction.")
         else:
             group_direction = self.group_id_names[0]
-                
-        sig_size_dict = {x:max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins) for x in self.signatures.columns}
+        
+        if exists(self._bins):
+            sig_size_dict = {x:max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins) for x in self.signatures.columns}
+        else:
+            sig_size_dict = {x:"var" for x in self.signatures.columns}
+        
         if self._matched_normals == False:
             self.de_obj = de.ExcludeSampleSubsampledDE(self.signature_scores.T, sig_size_dict, self._null_dist_scores,
                                                        self.d1_all, self.d2_all, self.subsample_mode,
@@ -514,29 +413,6 @@ class Beanie:
             self.de_summary = self.de_obj.summarize(alpha, min_ratio)
             self.de_summary.insert(1,"corrected_p_inbuilt",multipletests(self.de_summary.p, method = correction_method)[1])
 
-#             # correct for multiple hypothesis        
-#             gr1_subsampled_cells = DownSampleCellsForPValCorrection(self.d1_all, self.t1_cells, cells_to_subsample_1,
-#                                                                     self.de_obj.folds[0].group1_cell_count)
-#             gr2_subsampled_cells = DownSampleCellsForPValCorrection(self.d2_all, self.t2_cells, cells_to_subsample_2,
-#                                                                     self.de_obj.folds[0].group2_cell_count)
-
-#             pval_corrected_list_statistic = []  
-#             pval_corrected_list_p = []                                                             
-#             for x in self.de_summary.index:
-#                 key = max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins)
-#                 statistic,p = PValCorrectionPermutationTest(expression=self._null_dist_scores[key], 
-#                                                              t1_cells = gr1_subsampled_cells, 
-#                                                              t2_cells = gr2_subsampled_cells,
-#                                                              statistic_uncorrected = self.de_summary.loc[x,"statistic"], 
-#                                                              p_uncorrected = self.de_summary.loc[x,"p"],
-#                                                              test_name = self._de_test_name)
-
-#                 pval_corrected_list_statistic.append(statistic)     
-#                 pval_corrected_list_p.append(p)                                                                
-
-#             self.de_summary.insert(1, "corrected_p_new_statistic", pval_corrected_list_statistic)
-#             self.de_summary.insert(1, "corrected_p_new_p", pval_corrected_list_p)
-
         elif self._matched_normals == True:
             self.de_obj = de.ExcludePatientPairedSubsampleDE(self.signature_scores.T, sig_size_dict, self._null_dist_scores,
                                                        self.d1_all, self.d2_all, self.subsample_mode,
@@ -544,32 +420,10 @@ class Beanie:
                                                        group2_sample_cells=cells_to_subsample_2,
                                                        samples_per_fold=subsamples, test_name=test_name, **kwargs)
 
-
             self.de_obj.run()
             self.de_summary = self.de_obj.summarize(alpha, min_ratio)
             self.de_summary.insert(1,"corrected_p_inbuilt",multipletests(self.de_summary.p, method = correction_method)[1])
             
-#             gr1_subsampled_cells = DownSampleCellsForPValCorrection(self.d1_all, self.t1_cells, cells_to_subsample_1,
-#                                                                     self.de_obj.folds[0].group1_cell_count)
-#             gr2_subsampled_cells = DownSampleCellsForPValCorrection(self.d2_all, self.t2_cells, cells_to_subsample_2,
-#                                                                     self.de_obj.folds[0].group2_cell_count)
-
-#             pval_corrected_list_statistic = []  
-#             pval_corrected_list_p = []                                                             
-#             for x in self.de_summary.index:
-#                 key = max(5,round(len(self.signatures[x].dropna())/self._bins)*self._bins)
-#                 statistic,p = PValCorrectionPermutationTest(expression=self._null_dist_scores[key], 
-#                                                              t1_cells = gr1_subsampled_cells, 
-#                                                              t2_cells = gr2_subsampled_cells,
-#                                                              statistic_uncorrected = self.de_summary.loc[x,"statistic"], 
-#                                                              p_uncorrected = self.de_summary.loc[x,"p"],
-#                                                              test_name = self._de_test_name)
-
-#                 pval_corrected_list_statistic.append(statistic)     
-#                 pval_corrected_list_p.append(p)                                                                
-
-#             self.de_summary.insert(1, "corrected_p_new_statistic", pval_corrected_list_statistic)
-#             self.de_summary.insert(1, "corrected_p_new_p", pval_corrected_list_p)
             
         # calculate other stats
         results_df = CalculateLog2FoldChangeSigScores(self.signature_scores, self.d1_all, self.d2_all)
@@ -598,7 +452,11 @@ class Beanie:
             raise RuntimeError("Run DifferentialExpression() first.")
             
     def DriverGenes(self, group_direction=None):
-        print("Finding Driver Genes...")
+        if self._driver_genes_run==True:
+            print("DriverGenes() has already been run.")
+            return
+        
+        logging.info("Finding Driver Genes...")
         
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
@@ -645,95 +503,8 @@ class Beanie:
              columns = ["gr1_outlier","gr2_outlier","log2fold","log2fold_outlier","std_error","direction","robustness_ratio"])
         
         return df[["log2fold","std_error","robustness_ratio","log2fold_outlier","gr1_outlier","gr2_outlier"]]
-        
-    
-    def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
-                                                 subsamples=501, **kwargs):
-        """
-        Function for generating saturation curve for simulation. Helps in estimating the confidence levels 
-        
-        Parameters: 
-            alpha                                  p-value cutoff
-            min_ratio                              value of fold_rejection_ratio below which the signature is considered to be non-robust
-            subsamples                             number of repeated subsamples in every fold
-            minimum_expressing_samples             minimum number of samples that express gene to be considered
-            minimum_frac_per_sample                minimum fraction of cells expressing for a gene to be considered expressed in a sample
-            minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
-        
-        """
-        if len(self.de_obj_simulation)!=0:
-            print("Simulation has already been run.")
-            return
-        
-        step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
-        
-        for i in tqdm(range(0,max_iter)):
-            self.de_obj_simulation.append(de.ExcludeSampleSubsampledDENoCorrection(self.signature_scores.T, 
-                                                           self.d1_all, self.d2_all, self.subsample_mode, 
-                                                           group1_sample_cells=10+step_size*i, 
-                                                           group2_sample_cells=10+step_size*i, 
-                                                           samples_per_fold=subsamples, **kwargs))
-            self.de_obj_simulation[i].run()
-            self.de_summary_simulation.append(self.de_obj_simulation[i].summarize(alpha, min_ratio))
-            
-            
-    def PlotConfidenceDifferentialExpression(self):
-        """
-        Function to plot number of signatures which are robust, non-robust, statistically significant, for different
-        number of cells subsampled per patient.
-        
-        """
-        
-        robust_and_sig = []
-        nonrobust_and_sig = []
-        for i in range(len(self.de_summary_simulation)):
-            robust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==False) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
-            nonrobust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==True) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
-    
-        conf_list = []
-        for i in tqdm(range(len(self.de_obj_simulation))):
-            temp_list = []
-            temp_obj = self.de_obj_simulation[i]
-            temp_list.extend([(temp_obj.folds[j].p<0.05).sum() for j in range(len(temp_obj.folds))])
-            conf_list.append(temp_list)
-            
-        flat_list = []
-        for i in range(len(conf_list)):
-            flat_list.append([item for sublist in conf_list[i] for item in sublist])
-            
-        boxplot_df = pd.DataFrame(flat_list)
-        
-        fig, axs = plt.subplots(figsize=(len(conf_list)/2,5))
 
-        step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
 
-        bp = axs.boxplot(boxplot_df,labels=[10+step_size*i for i in range(0,len(conf_list))],patch_artist=True);
-
-        for box in bp['boxes']:
-            box.set(color='#FB91A4', linewidth=2)
-            box.set(facecolor = '#F5D9DD')
-        for whisker in bp['whiskers']:
-            whisker.set(color='#7570B3', linewidth=2)
-        for cap in bp['caps']:
-            cap.set(color='#7570B3', linewidth=2)
-        for median in bp['medians']:
-            median.set(color='#F3497F', linewidth=2)
-        for flier in bp['fliers']:
-            flier.set(marker='.', color='#E7298A', alpha=0.5)
-
-        axs.plot(range(1,len(conf_list)+1),robust_and_sig, label="robust", color="#F3497F", marker="o")
-        axs.plot(range(1,len(conf_list)+1),nonrobust_and_sig, label="non-robust", color="#C3A5E0", marker=".", linestyle='dashed', alpha=0.7)
-        axs.plot([1,len(conf_list)+1],
-                 [self.de_summary_simulation[0].shape[0],
-                  self.de_summary_simulation[0].shape[0]],color="#000000", linestyle='dashed', label="total")
-        axs.legend(bbox_to_anchor=(1.01, 1), loc='upper left');
-        axs.set_xlabel("Number of cells subsampled per patient")
-        axs.set_ylabel("Number of Signatures")
-        axs.set_title("Confidence Level Estimation");
-        self.confidence_de_plot = fig
-        return
-
-               
     def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#6CC9B6", color_gr2 = "#D9C5E4", alpha_val = 0.5, fig_aspect=0.75, **kwargs):
         """
         Function for generating barplot for statistically significant pathways (robust and non-robust).
@@ -823,6 +594,7 @@ class Beanie:
             plt.xticks(rotation=90);
 
             self.barplot = fig
+            fig.savefig(os.path.join(self.output_dir,"barplot.png"))
             return
     
     def PatientDropoutPlot(self, annotate=True):
@@ -914,6 +686,7 @@ class Beanie:
 
 
         self.patient_dropout_plot = fig
+        fig.savefig(os.path.join(self.output_dir,"patient_exclusion_plot.png"))
         return
 
     def HeatmapDriverGenes(self, signature_names=None, num_genes = 10, **kwargs):
@@ -937,6 +710,7 @@ class Beanie:
             
         self.num_driver_genes = num_genes
         self.heatmap = dg.GenerateHeatmap(self.normalised_counts.T, self.t1_ids, self.t2_ids, self.d1_all, self.d2_all, self.driver_genes, signature_names, num_genes, **kwargs)
+        fig.savefig(os.path.join(self.output_dir,"heatmap.png"))
         return
         
     def UpsetPlotDriverGenes(self, fig_width=None, signature_names=None):
@@ -1000,8 +774,8 @@ class Beanie:
         self.upsetplot_driver_genes = upsetplot.plot(upset_df['Intersection'], sort_by='cardinality', fig=fig, element_size=None, show_counts=True)
         axs.axis('off');
         fig.suptitle("Overlap between top ranked genes")
-
-        return self.upsetplot_driver_genes
+        fig.savefig(os.path.join(self.output_dir,"upsetplot_topkgenes.png"))
+        return
         
     def UpsetPlotSignatureGenes(self, fig_width = None, signature_names=None):
         """
@@ -1050,6 +824,92 @@ class Beanie:
         axs.axis('off');
         fig.suptitle("Overlap between gene signatures")
         
-        return self.upsetplot_driver_genes
+        fig.savefig(os.path.join(self.output_dir,"upsetplot_signatures.png"))
+        return
     
+#     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
+#                                                  subsamples=501, **kwargs):
+#         """
+#         Function for generating saturation curve for simulation. Helps in estimating the confidence levels 
+        
+#         Parameters: 
+#             alpha                                  p-value cutoff
+#             min_ratio                              value of fold_rejection_ratio below which the signature is considered to be non-robust
+#             subsamples                             number of repeated subsamples in every fold
+#             minimum_expressing_samples             minimum number of samples that express gene to be considered
+#             minimum_frac_per_sample                minimum fraction of cells expressing for a gene to be considered expressed in a sample
+#             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
+        
+#         """
+#         if len(self.de_obj_simulation)!=0:
+#             print("Simulation has already been run.")
+#             return
+        
+#         step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
+        
+#         for i in tqdm(range(0,max_iter)):
+#             self.de_obj_simulation.append(de.ExcludeSampleSubsampledDENoCorrection(self.signature_scores.T, 
+#                                                            self.d1_all, self.d2_all, self.subsample_mode, 
+#                                                            group1_sample_cells=10+step_size*i, 
+#                                                            group2_sample_cells=10+step_size*i, 
+#                                                            samples_per_fold=subsamples, **kwargs))
+#             self.de_obj_simulation[i].run()
+#             self.de_summary_simulation.append(self.de_obj_simulation[i].summarize(alpha, min_ratio))
+            
+            
+#     def PlotConfidenceDifferentialExpression(self):
+#         """
+#         Function to plot number of signatures which are robust, non-robust, statistically significant, for different
+#         number of cells subsampled per patient.
+        
+#         """
+        
+#         robust_and_sig = []
+#         nonrobust_and_sig = []
+#         for i in range(len(self.de_summary_simulation)):
+#             robust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==False) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
+#             nonrobust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==True) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
     
+#         conf_list = []
+#         for i in tqdm(range(len(self.de_obj_simulation))):
+#             temp_list = []
+#             temp_obj = self.de_obj_simulation[i]
+#             temp_list.extend([(temp_obj.folds[j].p<0.05).sum() for j in range(len(temp_obj.folds))])
+#             conf_list.append(temp_list)
+            
+#         flat_list = []
+#         for i in range(len(conf_list)):
+#             flat_list.append([item for sublist in conf_list[i] for item in sublist])
+            
+#         boxplot_df = pd.DataFrame(flat_list)
+        
+#         fig, axs = plt.subplots(figsize=(len(conf_list)/2,5))
+
+#         step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
+
+#         bp = axs.boxplot(boxplot_df,labels=[10+step_size*i for i in range(0,len(conf_list))],patch_artist=True);
+
+#         for box in bp['boxes']:
+#             box.set(color='#FB91A4', linewidth=2)
+#             box.set(facecolor = '#F5D9DD')
+#         for whisker in bp['whiskers']:
+#             whisker.set(color='#7570B3', linewidth=2)
+#         for cap in bp['caps']:
+#             cap.set(color='#7570B3', linewidth=2)
+#         for median in bp['medians']:
+#             median.set(color='#F3497F', linewidth=2)
+#         for flier in bp['fliers']:
+#             flier.set(marker='.', color='#E7298A', alpha=0.5)
+
+#         axs.plot(range(1,len(conf_list)+1),robust_and_sig, label="robust", color="#F3497F", marker="o")
+#         axs.plot(range(1,len(conf_list)+1),nonrobust_and_sig, label="non-robust", color="#C3A5E0", marker=".", linestyle='dashed', alpha=0.7)
+#         axs.plot([1,len(conf_list)+1],
+#                  [self.de_summary_simulation[0].shape[0],
+#                   self.de_summary_simulation[0].shape[0]],color="#000000", linestyle='dashed', label="total")
+#         axs.legend(bbox_to_anchor=(1.01, 1), loc='upper left');
+#         axs.set_xlabel("Number of cells subsampled per patient")
+#         axs.set_ylabel("Number of Signatures")
+#         axs.set_title("Confidence Level Estimation");
+#         self.confidence_de_plot = fig
+#         fig.savefig(os.path.join(self.output_dir,"confidence_plot_de.png"))
+#         return    

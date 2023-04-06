@@ -4,6 +4,7 @@
 import concurrent.futures
 import os
 import warnings
+import logging
 
 # third-party
 import numpy as np
@@ -148,9 +149,6 @@ class DEIterationGroup:
         self.effect = self.statistic / (self.group1_cell_count * self.group2_cell_count)
         
     def validate_parameters(self):
-#         if len(self.cells_chosen) % 2 == 0:
-#             raise ValueError('Must supply odd number of iterations for well-specified median')
-
         self.group1_cell_count = len(self.cells_chosen[0][0])
         self.group2_cell_count = len(self.cells_chosen[0][1])
         for group1, group2 in self.cells_chosen:
@@ -223,7 +221,6 @@ class ExcludeSampleFold(DEIterationGroup):
                 if sample_candidates:
                     replacement_candidates.append(sorted(sample_candidates))
 
-#             print(len(replacement_candidates))
             if self.subsample_mode=="max":
                 # weight for ~equal representation of samples
                 replacement_weights = np.hstack([[1 / len(x)] * len(x) for x in replacement_candidates])
@@ -263,8 +260,6 @@ class ExcludeSampleSubsampledDE:
             random_state            seed for PRNG
 
         """
-#         self.expression = expression
-#         self.null_dist_dict = null_dist_dict
         self.sig_size_dict = sig_size_dict
         self.group1_cells = group1_cells
         self.group2_cells = group2_cells
@@ -288,7 +283,7 @@ class ExcludeSampleSubsampledDE:
         else:
             self._flag_sample = 0
         
-        print("Creating groups of subsampled cells from every patient for bootstrapping") 
+        logging.info("Creating groups of subsampled cells from every patient for bootstrapping") 
         # when no sample is excluded
         self.folds.append(ExcludeSampleFold(expression,
                                             group1_cells,
@@ -317,7 +312,7 @@ class ExcludeSampleSubsampledDE:
                                                     test_name = test_name,
                                                     test_alternative=test_alternative))
         
-        print("Preparing null distribution per signature score size bucket for bootstrapping...")
+        logging.info("Preparing null distribution per signature score size bucket for bootstrapping...")
         for key in null_dist_dict.keys():
             res = []
             np.random.seed(random_state)
@@ -356,11 +351,11 @@ class ExcludeSampleSubsampledDE:
     def run(self, random_seed=42):
         if not self.has_run:
             np.random.seed(random_seed)
-            print("Generating p-value distribution for fold...")
+            logging.info("Generating p-value distribution for fold...")
             for fold in tqdm(self.folds):
                 fold.run()
 
-            print("Generating backgroud distribution for every signature score size bucket...")
+            logging.info("Generating backgroud distribution for every signature score size bucket...")
             for k in tqdm(self.null_dist_folds.keys()):
                 for fold in self.null_dist_folds[k]:
                     fold.run()
@@ -372,7 +367,7 @@ class ExcludeSampleSubsampledDE:
             df_fold_list = np.array_split(p, len(self.group1_cells.keys())+len(self.group2_cells.keys()), axis=1)
             significant_digits=0
             
-            print("Calculating empirical p-values...")
+            logging.info("Calculating empirical p-values...")
             for ind in tqdm(range(len(p.index))):
                 key = self.sig_size_dict[p.index[ind]]
                 df_random = p_dict[key]
@@ -753,158 +748,4 @@ class ExcludePatientPairedSubsampleDE(ExcludeSampleSubsampledDE):
 
         self.has_run = False
         self.summary = None   
-
-
-class StandAloneDEIterationGroup(DEIterationGroup):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.summary = None
-
-    def run(self, random_seed=42):
-        np.random.seed(random_seed)
-        return super().run()
-
-    def summarize(self):
-        if self.summary is None:
-            if self.p is None:
-                self.run()
-
-            # get p corresponding to median U value
-            median_U, p_at_median_U = median_U_and_corresponding_p(self.U.values, self.p.values)
-
-            detection_difference = pd.DataFrame(index=self.expression.index)
-            for i, (group1, group2) in enumerate(self.cells_chosen):
-                detection_difference[i] = (self.expression[group1] > 0).mean(axis=1) - (self.expression[group2] > 0).mean(axis=1)
-            self.summary = pd.DataFrame({'p': p_at_median_U,
-                                         'U': median_U,
-                                         'effect': median_U / (self.group1_cell_count * self.group2_cell_count),
-                                         'median_detection_difference': detection_difference.median(axis=1),
-                                         'mean_detection_difference': detection_difference.mean(axis=1)}).sort_values('U')
-
-        return self.summary
-    
-    
-class SubsampleClassDE(StandAloneDEIterationGroup):
-    def __init__(self, expression: pd.DataFrame, cell_classes: dict, group1_classes: list, group2_classes: list,
-                 sample_cells=dict, iterations=51, random_seed=42, **kwargs):
-        """Perform differential expression, subsampling cells from each class to reduce biases in cell abundance.
-
-        Parameters:
-            full_expression         gene x cell expression matrix
-            cell_classes            dictionary mapping cell class names to names of cells part of class
-            group1_classes          list of glasses in group1
-            group2_classes          list of classes in group2
-            sample_cells            dictionary mapping class to max number of cells to subsample from each class
-            iterations              number of subsampling iterations
-            group1_min_frac         minimum fraction of cells in any class in group 1 expressing for gene to be considered
-            min_expression          minimum expression value for a gene to be considered expressed in a cell
-            random_seed             seed for PRNG
-            **kwargs                keyword arguments for superclass
-
-        """
-        self.expression = expression
-        self.cell_classes = cell_classes
-        self.group1_classes = group1_classes
-        self.group2_classes = group2_classes
-        self.sample_cells = sample_cells
-        self.iterations = iterations
-        super().__init__(self.expression, 'run', **kwargs)
-
-        np.random.seed(random_seed)
-        self.choose_cells()
-
-    def choose_cells(self):
-        for _ in range(self.iterations):
-            group1 = []
-            group2 = []
-            for c in self.group1_classes:
-                cells = self.cell_classes[c]
-                group1.extend(np.random.choice(cells, size=min(self.sample_cells[c], len(cells)), replace=False))
-            for c in self.group2_classes:
-                cells = self.cell_classes[c]
-                group2.extend(np.random.choice(cells, size=min(self.sample_cells[c], len(cells)), replace=False))
-            self.cells_chosen.append((group1, group2))
-
-
-class SubsampleSuperclusterDE(StandAloneDEIterationGroup):
-    def __init__(self, expression: pd.DataFrame, cells: pd.DataFrame, test_cluster: str, iterations=51,
-                 test_cluster_is_super=False, test_cluster_cells=None, random_seed=42):
-        """Perform differential expression, subsampling cells from a (super)cluster and comparing against cells from
-        other super clusters.
-
-        Parameters:
-            full_expression         gene x cell expression matrix
-            cell                    DataFrame listing cells, with super_class and class columns labeling the cells
-            test_cluster            cluster to test against for DE
-            test_cluster_is_super   whether test group is a supercluster
-            iterations              number of subsampling iterations
-            test_cluster_min_frac   minimum fraction of cells in test_cluster expressing for gene to be considered
-            min_expression          minimum expression value for a gene to be considered expressed in a cell
-            test_cluster_cells      number of cells to take from test cluster (otherwise automatically chosen)
-            random_seed             seed for PRNG
-
-        """
-        self.expression = expression
-        self.cells = cells
-        self.test_cluster = test_cluster
-        self.test_cluster_is_super = test_cluster_is_super
-        if test_cluster_cells is None:
-            test_cluster_cells = int((cells['super_cluster' if self.test_cluster_is_super else 'cluster'] == test_cluster).sum() * 0.95)
-        self.test_cluster_cells = max(test_cluster_cells, 1)
-        self.test_cluster_min_frac = test_cluster_min_frac
-        self.min_expression = min_expression
-        self.iterations = iterations
-        super().__init__(self.expression, 'run')
-
-        np.random.seed(random_seed)
-        self.choose_cells()
-
-    def sample_super_cluster(self, super_cluster: str, cell_count: int) -> list:
-        super_cluster_size = (self.cells['super_cluster'] == super_cluster).sum()
-        if super_cluster_size < cell_count:
-            raise ValueError(f'Too few cells in {super_cluster}')
-
-        sample = []
-        super_cluster_cells = self.cells[lambda x: x['super_cluster'] == super_cluster]
-        cluster_size = dict(super_cluster_cells['cluster'].value_counts())
-        cells_per_cluster = int(cell_count / len(cluster_size))
-        # sample uniformly from clusters in super cluster
-        for cluster, size in cluster_size.items():
-            sample.extend(np.random.choice(self.cells[lambda x: x['cluster'] == cluster].index,
-                                           size=min(cells_per_cluster, size),
-                                           replace=False))
-
-        additional_cells_needed = cell_count - len(sample)
-        if additional_cells_needed:
-            # need more cells than can be provided by uniform sampling of the clusters; make up difference
-            # by sampling from other clusters with weights meant to equalize representation
-            unchosen_cells = sorted(set(super_cluster_cells.index) - set(sample))
-            weights = self.cells.loc[unchosen_cells, 'cluster'].map(lambda x: 1 / cluster_size[x]).values
-            weights /= weights.sum()
-            sample.extend(np.random.choice(unchosen_cells, size=additional_cells_needed, replace=False, p=weights))
-
-        return sample
-
-    def choose_cells(self):
-        if self.test_cluster_is_super:
-            test_super_cluster = self.test_cluster
-        else:
-            test_cluster_cells = self.cells[lambda x: x['cluster'] == self.test_cluster]
-            test_super_cluster = test_cluster_cells['super_cluster'].values[0]
-        other_super_clusters = sorted(set(self.cells['super_cluster']) - {test_super_cluster})
-        cells_per_other_super_cluster = self.cells[lambda x: x['super_cluster'].isin(other_super_clusters)]['super_cluster'].value_counts().min()
-
-        for _ in range(self.iterations):
-            if self.test_cluster_is_super:
-                group1 = self.sample_super_cluster(self.test_cluster, self.test_cluster_cells)
-            else:
-                group1 = np.random.choice(test_cluster_cells.index, size=self.test_cluster_cells, replace=False)
-
-            group2 = []
-            for super_cluster in other_super_clusters:
-                group2.extend(self.sample_super_cluster(super_cluster, cells_per_other_super_cluster))
-
-            self.cells_chosen.append((group1, group2))
-
-    
+        

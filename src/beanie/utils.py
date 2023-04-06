@@ -1,7 +1,7 @@
 from tqdm.auto import tqdm
 
 import os
-from datetime import datetime
+import logging
 
 import random
 import multiprocessing
@@ -31,38 +31,50 @@ def CPMNormalisationLogScaling(counts,**kwargs):
     return df
     
 
-def GenerateNullDistributionSignatures(signature,sorted_genes,bins,no_iters=200, random_state=42):    
+def GenerateNullDistributionSignatures(signature, sorted_genes, bins, dir_name, no_iters=200, random_state=42):    
     """Generate sets of random signatures of variable sizes"""
     
-    print("Generating background distribution of random signatures...")
+    if not os.path.exists(dir_name):
+        os.mkdir(dir_name)
+        
+    logging.info("Generating background distribution of random signatures...")
     q20 = np.quantile(sorted_genes,0.20)
     q40 = np.quantile(sorted_genes,0.40)
     q60 = np.quantile(sorted_genes,0.60)
     q80 = np.quantile(sorted_genes,0.80)
     
-    size_dict = {}
-    for x in signature.columns:
-        size = max(5,round(len(signature[x].dropna())/bins)*bins)
-        if size not in size_dict.keys():
-            size_dict[size]=[x]
-        else:
-            size_dict[size].append(x)
-    
-    random.seed(random_state)
-    random_set_dict = {}
-    for key in size_dict.keys():
-        random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes>=q80].index.to_list(),int(key/5)) for i in range(no_iters)]
-    
-    print("Storing temp random sig files in directory...")
-    dateTimeObj = datetime.now()
-    dir_name = "temp_files_"+dateTimeObj.strftime("%d_%b_%Y_%H_%M_%S_%f")
-    os.mkdir(dir_name)
-    for key in size_dict.keys():
-        df = pd.DataFrame(random_set_dict[key], index=["random_sig_"+str(i) for i in range(no_iters)])
+    if bins is None: 
+        keys = np.random.randint(low = 10, high=100, size=no_iters)
+        random.seed(random_state)        
+        random_set_dict = {}
+        random_set_dict["var"] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(keys[i]/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(keys[i]/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(keys[i]/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(keys[i]/5)) + random.sample(sorted_genes[sorted_genes>=q80].index.to_list(),int(keys[i]/5)) for i in range(no_iters)]
+
+        logging.info("Storing background signatures in output directory...")
+        df = pd.DataFrame(random_set_dict["var"], index=["random_sig_"+str(i) for i in range(no_iters)])
         df.insert(0,"description_column","NA")
-        df.to_csv("./" + dir_name + "/" + str(key) + ".gmt", sep="\t", header=None)
-        
-    return random_set_dict,dir_name
+        df.to_csv(os.path.join(dir_name,"bg_signatures_var.gmt"), sep="\t", header=None)
+    
+    else:
+        size_dict = {}
+        for x in signature.columns:
+            size = max(5,round(len(signature[x].dropna())/bins)*bins)
+            if size not in size_dict.keys():
+                size_dict[size]=[x]
+            else:
+                size_dict[size].append(x)
+
+        random.seed(random_state)
+        random_set_dict = {}
+        for key in size_dict.keys():
+            random_set_dict[key] = [random.sample(sorted_genes[sorted_genes<=q20].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q20) & (sorted_genes<=q40)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q40) & (sorted_genes<=q60)].index.to_list(),int(key/5)) + random.sample(sorted_genes[(sorted_genes>=q60) & (sorted_genes<=q80)].index.to_list(),int(key/5)) + random.sample(sorted_genes[sorted_genes>=q80].index.to_list(),int(key/5)) for i in range(no_iters)]
+
+        logging.info("Storing background signatures in output directory...")
+        for key in size_dict.keys():
+            df = pd.DataFrame(random_set_dict[key], index=["random_sig_"+str(i) for i in range(no_iters)])
+            df.insert(0,"description_column","NA")
+            df.to_csv(os.path.join(dir_name,"bg_signatures_" + str(key) + ".gmt"), sep="\t", header=None)
+
+    return random_set_dict
 
 def DownSampleCellsForPValCorrection(d:dict, t_cells:list, subsample_per_pat:int , no_subsample_cells:int, subsample_mode="max", random_state=42):
     
