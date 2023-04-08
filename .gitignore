@@ -129,5 +129,4 @@ dmypy.json
 .pyre/
 
 # Testing and Data Folders
-tests/
-sample_files/
+test_data/

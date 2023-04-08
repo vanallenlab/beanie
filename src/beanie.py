@@ -30,7 +30,7 @@ from . import differential_expression as de
 
 from .utils import *
 
-from ctxcore.genesig import GeneSignature
+from .genesig import GeneSignature
 from .scoring_aucell import aucell, create_rankings
 
 

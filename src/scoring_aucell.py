@@ -1,6 +1,6 @@
-from ctxcore.recovery import enrichment4cells
+# from ctxcore.recovery import enrichment4cells
 from typing import Sequence, Type
-from ctxcore.genesig import GeneSignature
+from .genesig import GeneSignature
 from multiprocessing import cpu_count, Process, Array
 from boltons.iterutils import chunked
 from multiprocessing.sharedctypes import RawArray
@@ -11,7 +11,8 @@ from ctypes import c_uint32
 from operator import attrgetter
 import pandas as pd
 import numpy as np
-
+from itertools import repeat
+from typing import List, Optional, Tuple
 
 LOGGER = logging.getLogger(__name__)
 # To reduce the memory footprint of a ranking matrix we use unsigned 32bit integers which provides a range from 0
@@ -19,6 +20,143 @@ LOGGER = logging.getLogger(__name__)
 DTYPE = 'uint32'
 DTYPE_C = c_uint32
 
+def derive_rank_cutoff(
+    auc_threshold: float, total_genes: int, rank_threshold: Optional[int] = None
+) -> int:
+    """
+    Get rank cutoff.
+    :param auc_threshold: The fraction of the ranked genome to take into account for
+        the calculation of the Area Under the recovery Curve.
+    :param total_genes: The total number of genes ranked.
+    :param rank_threshold: The total number of ranked genes to take into account when
+        creating a recovery curve.
+    :return Rank cutoff.
+    """
+
+    if not rank_threshold:
+#         print("here")
+        rank_threshold = total_genes - 1
+
+    assert (
+        0 < rank_threshold < total_genes
+    ), f"Rank threshold must be an integer between 1 and {total_genes:d}."
+    assert (
+        0.0 < auc_threshold <= 1.0
+    ), "AUC threshold must be a fraction between 0.0 and 1.0."
+
+    # In the R implementation the cutoff is rounded.
+    rank_cutoff = int(round(auc_threshold * total_genes))
+    assert 0 < rank_cutoff <= rank_threshold, (
+        f"An AUC threshold of {auc_threshold:f} corresponds to {rank_cutoff:d} top "
+        f"ranked genes/regions in the database. Please increase the rank threshold "
+        "or decrease the AUC threshold."
+    )
+    # Make sure we have exactly the same AUC values as the R-SCENIC pipeline.
+    # In the latter the rank threshold is not included in AUC calculation.
+    rank_cutoff -= 1
+    return rank_cutoff
+
+def weighted_auc1d(
+    ranking: np.ndarray, weights: np.ndarray, rank_cutoff: int, max_auc: float
+) -> np.ndarray:
+    """
+    Calculate the AUC of the weighted recovery curve of a single ranking.
+    :param ranking: The rank numbers of the genes.
+    :param weights: The associated weights.
+    :param rank_cutoff: The maximum rank to take into account when calculating the AUC.
+    :param max_auc: The maximum AUC.
+    :return: The normalized AUC.
+    """
+    # Using concatenate and full constructs required by numba.
+    # The rankings are 0-based. The position at the rank threshold is included in the calculation.
+    filter_idx = ranking < rank_cutoff
+    x = ranking[filter_idx]
+    y = weights[filter_idx]
+    sort_idx = np.argsort(x)
+    x = np.concatenate((x[sort_idx], np.full((1,), rank_cutoff, dtype=np.int_)))
+    y = y[sort_idx].cumsum()
+    return np.sum(np.diff(x) * y) / max_auc
+
+def auc2d(
+    rankings: np.ndarray, weights: np.ndarray, rank_cutoff: int, max_auc: float
+) -> np.ndarray:
+    """
+    Calculate the AUCs of multiple rankings.
+    :param rankings: The rankings.
+    :param weights: The weights associated with the selected genes.
+    :param rank_cutoff: The maximum rank to take into account when calculating the AUC.
+    :param max_auc: The maximum AUC.
+    :return: The normalized AUCs.
+    """
+    n_features = rankings.shape[0]
+    aucs = np.empty(shape=(n_features,), dtype=np.float64)  # Pre-allocation.
+    for row_idx in range(n_features):
+        aucs[row_idx] = weighted_auc1d(
+            rankings[row_idx, :], weights, rank_cutoff, max_auc
+        )
+    return aucs
+
+
+def aucs(
+    rnk: pd.DataFrame, total_genes: int, weights: np.ndarray, auc_threshold: float
+) -> np.ndarray:
+    """
+    Calculate AUCs (implementation without calculating recovery curves first).
+    :param rnk: A dataframe containing the rank number of genes of interest. Columns correspond to genes.
+    :param total_genes: The total number of genes ranked.
+    :param weights: The weights associated with the selected genes.
+    :param auc_threshold: The fraction of the ranked genome to take into account for the calculation of the
+        Area Under the recovery Curve.
+    :return: An array with the AUCs.
+    """
+    rank_cutoff = derive_rank_cutoff(auc_threshold, total_genes)
+    _features, _genes, rankings = rnk.index.values, rnk.columns.values, rnk.values
+    y_max = weights.sum()
+    # The rankings are 0-based. The position at the rank threshold is included in the calculation.
+    # The maximum AUC takes this into account.
+    # For reason of generating the same results as in R we introduce an error by adding one to the rank_cutoff
+    # for calculationg the maximum AUC.
+    maxauc = float((rank_cutoff + 1) * y_max)
+    assert maxauc > 0
+    return auc2d(rankings, weights, rank_cutoff, maxauc)
+
+
+def enrichment4cells(
+    rnk_mtx: pd.DataFrame, regulon: GeneSignature, auc_threshold: float = 0.05
+) -> pd.DataFrame:
+    """
+    Calculate the enrichment of the regulon for the cells in the ranking dataframe.
+    :param rnk_mtx: The ranked expression matrix (n_cells, n_genes).
+    :param regulon: The regulon the assess for enrichment
+    :param auc_threshold: The fraction of the ranked genome to take into account for the calculation of the
+        Area Under the recovery Curve.
+    :return:
+    """
+
+    total_genes = len(rnk_mtx.columns)
+    index = pd.MultiIndex.from_tuples(
+        list(zip(rnk_mtx.index.values, repeat(regulon.name))), names=["Cell", "Regulon"]
+    )
+    rnk = rnk_mtx.iloc[:, rnk_mtx.columns.isin(regulon.genes)]
+    if rnk.empty or (float(len(rnk.columns)) / float(len(regulon))) < 0.80:
+        LOGGER.warning(
+            f"Less than 80% of the genes in {regulon.name} are present in the "
+            "expression matrix."
+        )
+        return pd.DataFrame(
+            index=index,
+            data={"AUC": np.zeros(shape=(rnk_mtx.shape[0]), dtype=np.float64)},
+        )
+    else:
+        weights = np.asarray(
+            [
+                regulon[gene] if gene in regulon.genes else 1.0
+                for gene in rnk.columns.values
+            ]
+        )
+        return pd.DataFrame(
+            index=index, data={"AUC": aucs(rnk, total_genes, weights, auc_threshold)}
+        )
 
 def create_rankings(ex_mtx: pd.DataFrame, seed=None) -> pd.DataFrame:
     """
