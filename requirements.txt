@@ -1,4 +1,5 @@
 adjustText>=0.8
+attrs
 boltons>=20.2.1
 cytoolz>=0.12.1
 frozendict>=2.3.6
