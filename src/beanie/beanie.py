@@ -43,7 +43,7 @@ def exists(val):
 # BEANIE class
 class Beanie:
     
-    def __init__(self, counts_path: str, metad_path: str, sig_path:str, normalised:bool, subsample_mode = "equal", matched_normals=False, bins=False, bin_size=None, min_cells=20, output_dir="./beanie_out/", **kwargs):
+    def __init__(self, counts_path: str, metad_path: str, sig_path:str, normalised:bool, subsample_mode = "equal", matched_normals=False, bins=False, bin_size=None, min_cells=50, output_dir="./beanie_out/", **kwargs):
         """
         
         Parameters:
@@ -199,12 +199,12 @@ class Beanie:
             raise IOError("File containing signature scores must be provided.")
             
         self.driver_genes = dict()
-        self.num_driver_genes=10
+        self.num_driver_genes = 10
         self.subsample_mode = subsample_mode
-        self._differential_expression_run=False
-        self._driver_genes_run=False
+        self._differential_expression_run = False
+        self._driver_genes_run = False
         
-        if bins==True:
+        if bins == True:
             if exists(bin_size):
                 if type(bin_size) is int:
                     self._bins = bin_size
@@ -213,21 +213,21 @@ class Beanie:
             else:
                 raise IOError("bin_size must be provided if bins=True.")
         else:
-            self._bins=None
+            self._bins = None
                 
         self._matched_normals = matched_normals
         
         # check if matched normals, then both groups have same patients
-        if self._matched_normals==True:
-            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
-            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
+        if self._matched_normals == True:
+            p1 = set(self.metad.loc[self.metad.group_id == self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id == self.group_id_names[1],"sample_id"])
             if p1!=p2:
                 raise IOError("Cells are not provided for each sample in both groups.")
                 
         #check if there are any overlapping samples in the two treatment groups
-        elif self._matched_normals==False:
-            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
-            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
+        elif self._matched_normals == False:
+            p1 = set(self.metad.loc[self.metad.group_id == self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id == self.group_id_names[1],"sample_id"])
             if len(p1.intersection(p2))!=0:
                 raise IOError("Same sample_id present in both groups.")
             
@@ -235,7 +235,7 @@ class Beanie:
         cell_counts = self.metad.sample_id.value_counts()
         pats_below_threshhold = cell_counts[cell_counts<min_cells].index.to_list()
         if len(pats_below_threshhold)!=0:
-            print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed:", pats_below_threshhold)
+            print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed from analysis:", pats_below_threshhold)
             self.metad = self.metad[~self.metad.sample_id.isin(pats_below_threshhold)]
             counts = counts[self.metad.index]
             
@@ -365,14 +365,14 @@ class Beanie:
             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
         
         """
-        if self._differential_expression_run==True:
+        if self._differential_expression_run == True:
             print("DifferentialExpression has already been run.")
             return
         
         self._alpha = alpha
         self._min_ratio = min_ratio
         
-        if test_name in ["mwu-test","t-test","ks-test","kwh-test","welch-test"]:
+        if test_name in ["mwu-test", "t-test", "ks-test", "kwh-test", "welch-test"]:
             self._de_test_name = test_name
         else:
             raise IOError("The 'test_name' must be one of 'mwu-test', 't-test', 'ks-test', 'kwh-test', 'welch-test'.") 
@@ -505,7 +505,7 @@ class Beanie:
         return df[["log2fold","std_error","robustness_ratio","log2fold_outlier","gr1_outlier","gr2_outlier"]]
 
 
-    def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#6CC9B6", color_gr2 = "#D9C5E4", alpha_val = 0.5, fig_aspect=0.75, **kwargs):
+    def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#1E8449", color_gr2 = "#7D3C98", alpha_val = 0.5, **kwargs):
         """
         Function for generating barplot for statistically significant pathways (robust and non-robust).
         Hatched bars represent signatures with statistically significant differences between groups but non-robust to subsampling.
@@ -537,7 +537,7 @@ class Beanie:
             if a[i]==0:
                 a[i] += 1/pow(10,self._significant_digits)
         df_plot["corr_p_modified"] = (a).astype(float)
-        
+
         df_plot["log_corrp"] = -np.log10(df_plot["corr_p_modified"])
         df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.group_id_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
         df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
@@ -545,14 +545,12 @@ class Beanie:
 
         plt.rcParams['hatch.color'] = hatch_color
 
-        fig_width = size
-        fig_height = fig_width*fig_aspect
         with sns.plotting_context("notebook", rc={'axes.titlesize' : 10,
                                                'axes.labelsize' : 10,
                                                'xtick.labelsize' : 10,
                                                'ytick.labelsize' : 12,
                                                'font.name' : u'Arial'}):
-            fig, axs = plt.subplots(figsize=(fig_width,fig_height),dpi=dpi_res)
+            fig, axs = plt.subplots(dpi=dpi_res)
             bar = sns.barplot(x=df_plot.index ,y= "log_corrp", data=df_plot, color=color_gr1, **kwargs)
             for i,thisbar in enumerate(bar.patches):
 
@@ -571,14 +569,14 @@ class Beanie:
 
             if flag==0:    
                 axs.set_title("Statistically significant signatures")
-            axs.set_ylabel("empirical p-value")
+            axs.set_ylabel("Empirical log p-value")
             axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
             axs.set_ylim(bottom = -(self._significant_digits+1), top = self._significant_digits+1)
 
-            circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='non-robust to subsampling')
-            circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='robust to subsampling')
-            circ3 = mpatches.Patch(facecolor=color_gr1, label='enriched in '+self.group_id_names[0])
-            circ4 = mpatches.Patch(facecolor=color_gr2, label='enriched in '+self.group_id_names[1])
+            circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='Non-robust to subsampling')
+            circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='Robust to subsampling')
+            circ3 = mpatches.Patch(facecolor=color_gr1, label='Enriched in '+self.group_id_names[0])
+            circ4 = mpatches.Patch(facecolor=color_gr2, label='Enriched in '+self.group_id_names[1])
             axs.legend(handles = [circ1,circ2,circ3,circ4], bbox_to_anchor=(1.01, 1), loc='upper left')
 
             # Add *** above bars which have p-val<1/significant_digits
@@ -588,16 +586,16 @@ class Beanie:
                 _y = p.get_y() + p.get_height()
                 if abs(_y)==self._significant_digits and df_plot.iloc[count,:].corr_p==0:
                     if _y<0:
-                        axs.text(_x, _y-0.5, "***", ha="center", size=13) 
+                        axs.text(_x, _y-0.5, "**", ha="center")
                     else:
-                        axs.text(_x, _y+0.5, "***", ha="center", size=13) 
+                        axs.text(_x, _y+0.5, "**", ha="center")
             plt.xticks(rotation=90);
 
             self.barplot = fig
             fig.savefig(os.path.join(self.output_dir,"barplot.png"))
-            return
+        return
     
-    def PatientDropoutPlot(self, annotate=True):
+    def PatientDropoutPlot1(self, annotate=True):
         """
         Function to Matrix for whether a patient 
 
@@ -642,7 +640,7 @@ class Beanie:
                                            'xtick.labelsize' : 14,
                                            'ytick.labelsize' : 14,
                                            'font.name' : u'Arial'}):
-            fig = plt.figure(figsize=(17.5,8),dpi=300)
+            fig = plt.figure(figsize=(1.25*df_main.shape[0],1.25*df_main.shape[1]/2.5),dpi=300)
             gs = GridSpec(4,4)
             gs.update(wspace=0.015, hspace=0.05)
             ax_main = plt.subplot(gs[1:4, :3])
@@ -665,8 +663,9 @@ class Beanie:
 
             ax_yDist.barh(np.arange(mat.shape[1])+0.5,mat.T.sum(axis=1),color="#FED298")
             ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
-            ax_yDist.set_xlabel("no. of dropout signatures per patient",size=16);
-            ax_yDist.set_xlim([0,mat.T.shape[1]]);
+            ax_yDist.set_xlim([0,mat.T.shape[1]+1]);
+            ax_yDist_twin = ax_yDist.twinx()
+            ax_yDist_twin.set_ylabel("No. of dropout signatures per patient", size=16, loc="center")
 
             if annotate==True:
                 q25 = df_main.T.quantile(0.25).to_numpy()
@@ -680,9 +679,9 @@ class Beanie:
                     texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center',fontsize=9) for j in range(len(pats))])
 
                 adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-            circ1 = mpatches.Patch(facecolor="#F34C92", alpha=0.9, linewidth=1, label='FRR below threshhold for robustness')
-            circ2 = mpatches.Patch(facecolor="#F6E0A3", alpha=0.4, linewidth=1, label='FRR above threshhold for robustness')
-            ax_main.legend(handles = [circ1,circ2], bbox_to_anchor=(1.35,1.27))
+            circ1 = mpatches.Patch(facecolor="#F34C92", alpha=0.9, linewidth=1, label='FRR below robustness threshhold')
+            circ2 = mpatches.Patch(facecolor="#F6E0A3", alpha=0.4, linewidth=1, label='FRR above robustness threshhold')
+            fig.legend(handles = [circ1,circ2], bbox_to_anchor=(1,0), loc='upper right')
 
 
         self.patient_dropout_plot = fig
