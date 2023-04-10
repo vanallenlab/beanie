@@ -1,6 +1,6 @@
 # BEANIE: group Biology EstimAtion iN sIngle cEll
 
-BEANIE is a python package for identification of differentially-enriched gene signatures in single-cell RNA-seq datasets. It can compare between two clinical groups of patients that share a subpopulation of cells, and calculates a biologically contextualized p-value (empirical p-value) and robustness for each gene signature. Tutorials can be found on the project [wiki](https://www.github.com/vanallenlab/beanie/wiki)
+BEANIE is a python package for identification of differentially-enriched gene signatures in single-cell RNA-seq datasets. It can compare between two clinical groups of patients that share a subpopulation of cells, and calculates a biologically contextualized p-value (empirical p-value) and robustness for each gene signature. Tutorials can be found on the project [wiki](https://www.github.com/vanallenlab/beanie/wiki).
 
 <!-- It decreases the false positive rate by more than 10-fold as compared to the conventional methods such as Mann-Whitney U test and Generalised Linear Models.
 
