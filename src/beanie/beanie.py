@@ -451,7 +451,7 @@ class Beanie:
         else:
             raise RuntimeError("Run DifferentialExpression() first.")
             
-    def DriverGenes(self, group_direction=None):
+    def RankGenes(self, group_direction=None):
         if self._driver_genes_run==True:
             print("DriverGenes() has already been run.")
             return
@@ -482,7 +482,7 @@ class Beanie:
                     
         self._driver_genes_run = True
 
-    def GetDriverGenesSummary(self):
+    def GetRankGenesSummary(self):
         
         if self._driver_genes_run==False:
             raise RuntimeError("Run DriverGenes() method first.")
@@ -595,7 +595,7 @@ class Beanie:
             fig.savefig(os.path.join(self.output_dir,"barplot.png"))
         return
     
-    def PatientDropoutPlot1(self, annotate=True):
+    def SampleDropoutPlot(self, annotate=True):
         """
         Function to Matrix for whether a patient 
 
@@ -688,7 +688,7 @@ class Beanie:
         fig.savefig(os.path.join(self.output_dir,"patient_exclusion_plot.png"))
         return
 
-    def HeatmapDriverGenes(self, signature_names=None, num_genes = 10, **kwargs):
+    def GeneRankHeatmap(self, signature_names=None, num_genes = 10, **kwargs):
         """
         Function for plotting driver genes (by default top 10) of all robust signatures.
         thought - is it possible to incorporate corr-coeff, pval as well in this plot
@@ -712,7 +712,7 @@ class Beanie:
         fig.savefig(os.path.join(self.output_dir,"heatmap.png"))
         return
         
-    def UpsetPlotDriverGenes(self, fig_width=None, signature_names=None):
+    def GeneRankUpsetPlot(self, fig_width=None, signature_names=None):
         """
         Function to plot intersection of driver genes between different signatures 
         (option to either enter the signature names list for which you want the plot; 
@@ -776,7 +776,7 @@ class Beanie:
         fig.savefig(os.path.join(self.output_dir,"upsetplot_topkgenes.png"))
         return
         
-    def UpsetPlotSignatureGenes(self, fig_width = None, signature_names=None):
+    def SignatureGenesUpsetPlot(self, fig_width = None, signature_names=None):
         """
         Function to plot intersection of genes in every signature.
         
