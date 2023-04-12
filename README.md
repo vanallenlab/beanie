@@ -30,7 +30,7 @@ pip install git+https://github.com/vanallenlab/beanie.git
 
 **Requirements**
 
-- python v3.6 and above.
+- python v3.7 and above.
 <!-- - Java v1.8 and above. -->
 
 
