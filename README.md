@@ -28,6 +28,8 @@ BEANIE v1.0.0 can be installed directly via github -
 pip install git+https://github.com/vanallenlab/beanie.git
 ```
 
+_(Optional) If you prefer to use jupyter-notebook or jupyter-lab for your analysis, you may have to install those separately in the newly created beanie_env after installing BEANIE._
+
 **Requirements**
 
 - python v3.7 and above.
