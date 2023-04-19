@@ -72,7 +72,7 @@ class Beanie:
             self.heatmap                      figure for HeatmapDriverGenes function
             self.upsetplot_driver_genes       figure for UpsetPlotDriverGenes function
             self.upsetplot_signature_genes    figure for UpsetPlotSignatureGenes function
-            self.de_obj                       DifferentialExpression object for max/custom subsample size
+            self.de_obj                       differentialExpression object for max/custom subsample size
             self.de_summary                   dataframes containing the output of DifferentialExpression
             self.de_obj_simulation            list of DifferentialExpression objects for max/custom subsample siz
             self.de_summary_simulation        dictionary mapping the subsample size to dataframes generated from DifferentialExpression object 
@@ -81,7 +81,7 @@ class Beanie:
             self.d1_all                       dictionary mapping patients to cell_ids in treatment group A
             self.d2_all                       dictionary mapping patients to cell_ids in treatment group B
             self.max_subsample_size
-            self.group_id_names        list of treatment groups names in self.metad
+            self.group_id_names               list of treatment groups names in self.metad
             self.top_signatures               top 5 most significant and robust genes
             self.num_driver_genes             number of driver genes for which plots to be made
             self.t1_cells
@@ -291,22 +291,24 @@ class Beanie:
         return
 
         
-    def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):
+    def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000):
         """ 
         Function to do signature scoring using in-built scoring functions.
         
         Parameters:
-            scoring_method                          choice between beanie (default), mean and combined-z to score the cells.
-            no_random_sigs                          the number of random signatures that should be generated for FDR correction
-            aucell_quantile                         parameter to indicate the quantile of genes to consider for ROC, if beanie method of scoring is being used. 
+            scoring_method                          'beanie' (AUCell-inspired, default), 'mean' (weighted mean) and 'combined-z' (z-score).
+            no_random_sigs                          The number of background signatures that should be generated for p-value correction.
         
         """
+        
+        # Parameter to indicate the quantile of genes to consider for ROC
+        aucell_quantile=0.05
         
         self._scoring_method = scoring_method
                        
         logging.info("Scoring signatures...")
              
-        # Score background signatures
+        # Score background gene signatures
         sorted_genes = pd.Series.sort_values(self.normalised_counts.sum(axis=1))
         null_dist_sigs = GenerateNullDistributionSignatures(self.signatures, sorted_genes, self._bins, self.output_dir, no_random_sigs)
         self._null_dist_scores = dict()
@@ -351,18 +353,19 @@ class Beanie:
         return      
                 
         
-    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, test_name="mwu-test", group_direction = None, **kwargs):
+    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=500, test_name="mwu-test", group_direction = None, **kwargs):
         """
         Function for finding out differentially expressed robust and statistically significant signatures. 
         
         Parameters: 
-            cells_to_subsample                     cells that should be subsampled per patient; if no input provided, function to choose the max possible subsample size
+            cells_to_subsample1                    Cells subsampled per sample in group1; by default choose the max possible subsample size.
+            cells_to_subsample2                    Cells subsampled per sample in group2; by default choose the max possible subsample size.
             alpha                                  p-value cutoff
-            min_ratio                              value of fold_rejection_ratio below which the signature is considered to be non-robust
-            subsamples                             number of repeated subsamples in every fold
-            minimum_expressing_samples             minimum number of samples that express gene to be considered
-            minimum_frac_per_sample                minimum fraction of cells expressing for a gene to be considered expressed in a sample
-            minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
+            min_ratio                              Value of Fold Rejection Ratio (FRR( below which the signature is considered to be non-robust.
+            subsamples                             Number of repeated subsamples in every fold. Default = 500.
+            minimum_expressing_samples             Minimum number of samples that express gene signature.
+            minimum_frac_per_sample                Minimum fraction of cells expressing for a gene signature to be considered expressed in a sample.
+            minimum_expression                     Minimum expression value for a gene signature to be considered expressed in a cell.
         
         """
         if self._differential_expression_run == True:
@@ -444,19 +447,16 @@ class Beanie:
         
     def GetDifferentialExpressionSummary(self):
         if self._differential_expression_run==True:
-            if self._sig_score_path==None:
-                return self.de_summary[["log2fold","p","corr_p","corrected_p_inbuilt","nonrobust","direction"]]
-            else:
-                return self.de_summary[["log2fold","p","corr_p","nonrobust","direction"]]
+            return self.de_summary[["log2fold","p","corr_p","nonrobust","direction"]]
         else:
             raise RuntimeError("Run DifferentialExpression() first.")
             
     def RankGenes(self, group_direction=None):
         if self._driver_genes_run==True:
-            print("DriverGenes() has already been run.")
+            print("RankGenes() has already been run.")
             return
         
-        logging.info("Finding Driver Genes...")
+        logging.info("Ranking Genes...")
         
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
@@ -485,7 +485,7 @@ class Beanie:
     def GetRankGenesSummary(self):
         
         if self._driver_genes_run==False:
-            raise RuntimeError("Run DriverGenes() method first.")
+            raise RuntimeError("Run RankGenes() method first.")
             
         elif self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
@@ -705,7 +705,7 @@ class Beanie:
                 signature_names = self.top_signatures
                 
         if self._driver_genes_run==False:
-            raise RuntimeError("Run DriverGenes() first.")
+            raise RuntimeError("Run RankGenes() first.")
             
         self.num_driver_genes = num_genes
         self.heatmap = dg.GenerateHeatmap(self.normalised_counts.T, self.t1_ids, self.t2_ids, self.d1_all, self.d2_all, self.driver_genes, signature_names, num_genes, **kwargs)
@@ -733,7 +733,7 @@ class Beanie:
             print("Too many signature names to show upset plot")
             
         if self._driver_genes_run==False:
-            raise RuntimeEror("Run DriverGenes() first.")
+            raise RuntimeEror("Run RankGenes() first.")
             
         upset_df_prep = pd.DataFrame(columns=self.driver_genes.keys())
         for x in self.driver_genes.keys():
