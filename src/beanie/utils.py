@@ -181,7 +181,7 @@ def SignatureScoringCombinedZScore(counts, signatures):
     
     for x in signatures.columns:
         genes = signatures[x].dropna().to_list()
-        temp = set(genes).intersection(gene_list)
+        temp = sorted(set(genes).intersection(gene_list))
         score_df[x] = counts_scaled.loc[temp,:].mean(axis=0)/sqrt(len(temp)) 
     
     return score_df

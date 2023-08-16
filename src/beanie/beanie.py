@@ -30,7 +30,7 @@ from . import differential_expression as de
 
 from .utils import *
 
-from .genesig import GeneSignature
+from ctxcore.genesig import GeneSignature
 from .scoring_aucell import aucell, create_rankings
 
 
@@ -43,7 +43,7 @@ def exists(val):
 # BEANIE class
 class Beanie:
     
-    def __init__(self, counts_path: str, metad_path: str, sig_path:str, normalised:bool, subsample_mode = "equal", matched_normals=False, bins=False, bin_size=None, min_cells=50, output_dir="./beanie_out/", **kwargs):
+    def __init__(self, counts_path: str, metad_path: str, sig_path:str, normalised:bool, subsample_mode = "equal", matched_normals=False, bins=False, bin_size=None, min_cells=20, output_dir="./beanie_out/", **kwargs):
         """
         
         Parameters:
@@ -72,7 +72,7 @@ class Beanie:
             self.heatmap                      figure for HeatmapDriverGenes function
             self.upsetplot_driver_genes       figure for UpsetPlotDriverGenes function
             self.upsetplot_signature_genes    figure for UpsetPlotSignatureGenes function
-            self.de_obj                       differentialExpression object for max/custom subsample size
+            self.de_obj                       DifferentialExpression object for max/custom subsample size
             self.de_summary                   dataframes containing the output of DifferentialExpression
             self.de_obj_simulation            list of DifferentialExpression objects for max/custom subsample siz
             self.de_summary_simulation        dictionary mapping the subsample size to dataframes generated from DifferentialExpression object 
@@ -81,7 +81,7 @@ class Beanie:
             self.d1_all                       dictionary mapping patients to cell_ids in treatment group A
             self.d2_all                       dictionary mapping patients to cell_ids in treatment group B
             self.max_subsample_size
-            self.group_id_names               list of treatment groups names in self.metad
+            self.group_id_names        list of treatment groups names in self.metad
             self.top_signatures               top 5 most significant and robust genes
             self.num_driver_genes             number of driver genes for which plots to be made
             self.t1_cells
@@ -199,12 +199,12 @@ class Beanie:
             raise IOError("File containing signature scores must be provided.")
             
         self.driver_genes = dict()
-        self.num_driver_genes = 10
+        self.num_driver_genes=10
         self.subsample_mode = subsample_mode
-        self._differential_expression_run = False
-        self._driver_genes_run = False
+        self._differential_expression_run=False
+        self._driver_genes_run=False
         
-        if bins == True:
+        if bins==True:
             if exists(bin_size):
                 if type(bin_size) is int:
                     self._bins = bin_size
@@ -213,21 +213,21 @@ class Beanie:
             else:
                 raise IOError("bin_size must be provided if bins=True.")
         else:
-            self._bins = None
+            self._bins=None
                 
         self._matched_normals = matched_normals
         
         # check if matched normals, then both groups have same patients
-        if self._matched_normals == True:
-            p1 = set(self.metad.loc[self.metad.group_id == self.group_id_names[0],"sample_id"])
-            p2 = set(self.metad.loc[self.metad.group_id == self.group_id_names[1],"sample_id"])
+        if self._matched_normals==True:
+            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
             if p1!=p2:
                 raise IOError("Cells are not provided for each sample in both groups.")
                 
         #check if there are any overlapping samples in the two treatment groups
-        elif self._matched_normals == False:
-            p1 = set(self.metad.loc[self.metad.group_id == self.group_id_names[0],"sample_id"])
-            p2 = set(self.metad.loc[self.metad.group_id == self.group_id_names[1],"sample_id"])
+        elif self._matched_normals==False:
+            p1 = set(self.metad.loc[self.metad.group_id==self.group_id_names[0],"sample_id"])
+            p2 = set(self.metad.loc[self.metad.group_id==self.group_id_names[1],"sample_id"])
             if len(p1.intersection(p2))!=0:
                 raise IOError("Same sample_id present in both groups.")
             
@@ -235,7 +235,7 @@ class Beanie:
         cell_counts = self.metad.sample_id.value_counts()
         pats_below_threshhold = cell_counts[cell_counts<min_cells].index.to_list()
         if len(pats_below_threshhold)!=0:
-            print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed from analysis:", pats_below_threshhold)
+            print("The following patients have less than "+str(min_cells)+" cells present, so they will be removed:", pats_below_threshhold)
             self.metad = self.metad[~self.metad.sample_id.isin(pats_below_threshhold)]
             counts = counts[self.metad.index]
             
@@ -291,24 +291,22 @@ class Beanie:
         return
 
         
-    def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000):
+    def SignatureScoring(self, scoring_method="beanie", no_random_sigs=1000, aucell_quantile=0.05):
         """ 
         Function to do signature scoring using in-built scoring functions.
         
         Parameters:
-            scoring_method                          'beanie' (AUCell-inspired, default), 'mean' (weighted mean) and 'combined-z' (z-score).
-            no_random_sigs                          The number of background signatures that should be generated for p-value correction.
+            scoring_method                          choice between beanie (default), mean and combined-z to score the cells.
+            no_random_sigs                          the number of random signatures that should be generated for FDR correction
+            aucell_quantile                         parameter to indicate the quantile of genes to consider for ROC, if beanie method of scoring is being used. 
         
         """
-        
-        # Parameter to indicate the quantile of genes to consider for ROC
-        aucell_quantile=0.05
         
         self._scoring_method = scoring_method
                        
         logging.info("Scoring signatures...")
              
-        # Score background gene signatures
+        # Score background signatures
         sorted_genes = pd.Series.sort_values(self.normalised_counts.sum(axis=1))
         null_dist_sigs = GenerateNullDistributionSignatures(self.signatures, sorted_genes, self._bins, self.output_dir, no_random_sigs)
         self._null_dist_scores = dict()
@@ -333,18 +331,18 @@ class Beanie:
                                                                            
         elif scoring_method=="mean":
             self.signature_scores = SignatureScoringMean(self.normalised_counts,self.signatures)
-            for key in self._null_dist_sigs.keys():
+            for key in null_dist_sigs.keys():
                 self._null_dist_scores[key] = SignatureScoringMean(self.normalised_counts,
-                                                              pd.DataFrame(self._null_dist_sigs[key],
-                                                                           index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
+                                                              pd.DataFrame(null_dist_sigs[key],
+                                                                           index=["random_sig_"+str(i) for i in range(len(null_dist_sigs[key]))]))
 
                      
         elif scoring_method=="combined-z":
             self.signature_scores = SignatureScoringCombinedZScore(self.normalised_counts,self.signatures)
-            for key in self._null_dist_sigs.keys():
+            for key in null_dist_sigs.keys():
                 self._null_dist_scores[key] = SignatureScoringCombinedZScore(self.normalised_counts,
-                                                              pd.DataFrame(self._null_dist_sigs[key],
-                                                                           index=["random_sig_"+str(i) for i in range(len(self._null_dist_sigs[key]))]))
+                                                              pd.DataFrame(null_dist_sigs[key],
+                                                                           index=["random_sig_"+str(i) for i in range(len(null_dist_sigs[key]))]))
 
             
         else:
@@ -353,29 +351,28 @@ class Beanie:
         return      
                 
         
-    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=500, test_name="mwu-test", group_direction = None, **kwargs):
+    def DifferentialExpression(self, cells_to_subsample_1=None, cells_to_subsample_2=None, alpha=0.05, min_ratio=0.9, subsamples=501, test_name="mwu-test", group_direction = None, **kwargs):
         """
         Function for finding out differentially expressed robust and statistically significant signatures. 
         
         Parameters: 
-            cells_to_subsample1                    Cells subsampled per sample in group1; by default choose the max possible subsample size.
-            cells_to_subsample2                    Cells subsampled per sample in group2; by default choose the max possible subsample size.
+            cells_to_subsample                     cells that should be subsampled per patient; if no input provided, function to choose the max possible subsample size
             alpha                                  p-value cutoff
-            min_ratio                              Value of Fold Rejection Ratio (FRR( below which the signature is considered to be non-robust.
-            subsamples                             Number of repeated subsamples in every fold. Default = 500.
-            minimum_expressing_samples             Minimum number of samples that express gene signature.
-            minimum_frac_per_sample                Minimum fraction of cells expressing for a gene signature to be considered expressed in a sample.
-            minimum_expression                     Minimum expression value for a gene signature to be considered expressed in a cell.
+            min_ratio                              value of fold_rejection_ratio below which the signature is considered to be non-robust
+            subsamples                             number of repeated subsamples in every fold
+            minimum_expressing_samples             minimum number of samples that express gene to be considered
+            minimum_frac_per_sample                minimum fraction of cells expressing for a gene to be considered expressed in a sample
+            minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
         
         """
-        if self._differential_expression_run == True:
+        if self._differential_expression_run==True:
             print("DifferentialExpression has already been run.")
             return
         
         self._alpha = alpha
         self._min_ratio = min_ratio
         
-        if test_name in ["mwu-test", "t-test", "ks-test", "kwh-test", "welch-test"]:
+        if test_name in ["mwu-test","t-test","ks-test","kwh-test","welch-test"]:
             self._de_test_name = test_name
         else:
             raise IOError("The 'test_name' must be one of 'mwu-test', 't-test', 'ks-test', 'kwh-test', 'welch-test'.") 
@@ -447,16 +444,19 @@ class Beanie:
         
     def GetDifferentialExpressionSummary(self):
         if self._differential_expression_run==True:
-            return self.de_summary[["log2fold","p","corr_p","nonrobust","direction"]]
+            if self._sig_score_path==None:
+                return self.de_summary[["log2fold","p","corr_p","corrected_p_inbuilt","nonrobust","direction"]]
+            else:
+                return self.de_summary[["log2fold","p","corr_p","nonrobust","direction"]]
         else:
             raise RuntimeError("Run DifferentialExpression() first.")
             
-    def RankGenes(self, group_direction=None):
+    def DriverGenes(self, group_direction=None):
         if self._driver_genes_run==True:
-            print("RankGenes() has already been run.")
+            print("DriverGenes() has already been run.")
             return
         
-        logging.info("Ranking Genes...")
+        logging.info("Finding Driver Genes...")
         
         if self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
@@ -482,10 +482,10 @@ class Beanie:
                     
         self._driver_genes_run = True
 
-    def GetRankGenesSummary(self):
+    def GetDriverGenesSummary(self):
         
         if self._driver_genes_run==False:
-            raise RuntimeError("Run RankGenes() method first.")
+            raise RuntimeError("Run DriverGenes() method first.")
             
         elif self._differential_expression_run==False:
             raise RuntimeError("Run DifferentialExpression() first.")
@@ -505,7 +505,7 @@ class Beanie:
         return df[["log2fold","std_error","robustness_ratio","log2fold_outlier","gr1_outlier","gr2_outlier"]]
 
 
-    def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#1E8449", color_gr2 = "#7D3C98", alpha_val = 0.5, **kwargs):
+    def BarPlot(self, hatch_color = '#FFFFFF', dpi_res = 300, color_gr1 = "#6CC9B6", color_gr2 = "#D9C5E4", alpha_val = 0.5, fig_aspect=0.75, **kwargs):
         """
         Function for generating barplot for statistically significant pathways (robust and non-robust).
         Hatched bars represent signatures with statistically significant differences between groups but non-robust to subsampling.
@@ -537,7 +537,7 @@ class Beanie:
             if a[i]==0:
                 a[i] += 1/pow(10,self._significant_digits)
         df_plot["corr_p_modified"] = (a).astype(float)
-
+        
         df_plot["log_corrp"] = -np.log10(df_plot["corr_p_modified"])
         df_plot["log_corrp"] = [df_plot["log_corrp"][count] if df_plot["direction"][count] == self.group_id_names[0] else -1*df_plot["log_corrp"][count] for count in range(0,df_plot.shape[0])]
         df_plot = df_plot.sort_values(by=["log_corrp"],axis=0)
@@ -545,12 +545,14 @@ class Beanie:
 
         plt.rcParams['hatch.color'] = hatch_color
 
+        fig_width = size
+        fig_height = fig_width*fig_aspect
         with sns.plotting_context("notebook", rc={'axes.titlesize' : 10,
                                                'axes.labelsize' : 10,
                                                'xtick.labelsize' : 10,
                                                'ytick.labelsize' : 12,
                                                'font.name' : u'Arial'}):
-            fig, axs = plt.subplots(dpi=dpi_res)
+            fig, axs = plt.subplots(figsize=(fig_width,fig_height),dpi=dpi_res)
             bar = sns.barplot(x=df_plot.index ,y= "log_corrp", data=df_plot, color=color_gr1, **kwargs)
             for i,thisbar in enumerate(bar.patches):
 
@@ -569,14 +571,14 @@ class Beanie:
 
             if flag==0:    
                 axs.set_title("Statistically significant signatures")
-            axs.set_ylabel("Empirical log p-value")
+            axs.set_ylabel("empirical p-value")
             axs.set_xlim(left=-0.5,right=df_plot.shape[0]-0.5)
             axs.set_ylim(bottom = -(self._significant_digits+1), top = self._significant_digits+1)
 
-            circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='Non-robust to subsampling')
-            circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='Robust to subsampling')
-            circ3 = mpatches.Patch(facecolor=color_gr1, label='Enriched in '+self.group_id_names[0])
-            circ4 = mpatches.Patch(facecolor=color_gr2, label='Enriched in '+self.group_id_names[1])
+            circ1 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, hatch='\\\\', label='non-robust to subsampling')
+            circ2 = mpatches.Patch(facecolor="#B2B1B0", alpha=alpha_val, label='robust to subsampling')
+            circ3 = mpatches.Patch(facecolor=color_gr1, label='enriched in '+self.group_id_names[0])
+            circ4 = mpatches.Patch(facecolor=color_gr2, label='enriched in '+self.group_id_names[1])
             axs.legend(handles = [circ1,circ2,circ3,circ4], bbox_to_anchor=(1.01, 1), loc='upper left')
 
             # Add *** above bars which have p-val<1/significant_digits
@@ -586,16 +588,16 @@ class Beanie:
                 _y = p.get_y() + p.get_height()
                 if abs(_y)==self._significant_digits and df_plot.iloc[count,:].corr_p==0:
                     if _y<0:
-                        axs.text(_x, _y-0.5, "**", ha="center")
+                        axs.text(_x, _y-0.5, "***", ha="center", size=13) 
                     else:
-                        axs.text(_x, _y+0.5, "**", ha="center")
+                        axs.text(_x, _y+0.5, "***", ha="center", size=13) 
             plt.xticks(rotation=90);
 
             self.barplot = fig
             fig.savefig(os.path.join(self.output_dir,"barplot.png"))
-        return
+            return
     
-    def SampleDropoutPlot(self, annotate=True):
+    def PatientDropoutPlot(self, annotate=True):
         """
         Function to Matrix for whether a patient 
 
@@ -640,7 +642,7 @@ class Beanie:
                                            'xtick.labelsize' : 14,
                                            'ytick.labelsize' : 14,
                                            'font.name' : u'Arial'}):
-            fig = plt.figure(figsize=(1.25*df_main.shape[0],1.25*df_main.shape[1]/2.5),dpi=300)
+            fig = plt.figure(figsize=(17.5,8),dpi=300)
             gs = GridSpec(4,4)
             gs.update(wspace=0.015, hspace=0.05)
             ax_main = plt.subplot(gs[1:4, :3])
@@ -663,9 +665,8 @@ class Beanie:
 
             ax_yDist.barh(np.arange(mat.shape[1])+0.5,mat.T.sum(axis=1),color="#FED298")
             ax_yDist.yaxis.set_tick_params(which='both', labelright=False, labelleft=False)
-            ax_yDist.set_xlim([0,mat.T.shape[1]+1]);
-            ax_yDist_twin = ax_yDist.twinx()
-            ax_yDist_twin.set_ylabel("No. of dropout signatures per patient", size=16, loc="center")
+            ax_yDist.set_xlabel("no. of dropout signatures per patient",size=16);
+            ax_yDist.set_xlim([0,mat.T.shape[1]]);
 
             if annotate==True:
                 q25 = df_main.T.quantile(0.25).to_numpy()
@@ -679,16 +680,16 @@ class Beanie:
                     texts.extend([ax_xDist.text(i,fr_ratio[fr_ratio<outlier_bottom_lim[i]][j],pats[j],ha='center', va='center',fontsize=9) for j in range(len(pats))])
 
                 adjust_text(texts,arrowprops=dict(arrowstyle='-',color='#014439'));
-            circ1 = mpatches.Patch(facecolor="#F34C92", alpha=0.9, linewidth=1, label='FRR below robustness threshhold')
-            circ2 = mpatches.Patch(facecolor="#F6E0A3", alpha=0.4, linewidth=1, label='FRR above robustness threshhold')
-            fig.legend(handles = [circ1,circ2], bbox_to_anchor=(1,0), loc='upper right')
+            circ1 = mpatches.Patch(facecolor="#F34C92", alpha=0.9, linewidth=1, label='FRR below threshhold for robustness')
+            circ2 = mpatches.Patch(facecolor="#F6E0A3", alpha=0.4, linewidth=1, label='FRR above threshhold for robustness')
+            ax_main.legend(handles = [circ1,circ2], bbox_to_anchor=(1.35,1.27))
 
 
         self.patient_dropout_plot = fig
         fig.savefig(os.path.join(self.output_dir,"patient_exclusion_plot.png"))
         return
 
-    def GeneRankHeatmap(self, signature_names=None, num_genes = 10, **kwargs):
+    def HeatmapDriverGenes(self, signature_names=None, num_genes = 10, **kwargs):
         """
         Function for plotting driver genes (by default top 10) of all robust signatures.
         thought - is it possible to incorporate corr-coeff, pval as well in this plot
@@ -705,14 +706,14 @@ class Beanie:
                 signature_names = self.top_signatures
                 
         if self._driver_genes_run==False:
-            raise RuntimeError("Run RankGenes() first.")
+            raise RuntimeError("Run DriverGenes() first.")
             
         self.num_driver_genes = num_genes
         self.heatmap = dg.GenerateHeatmap(self.normalised_counts.T, self.t1_ids, self.t2_ids, self.d1_all, self.d2_all, self.driver_genes, signature_names, num_genes, **kwargs)
         fig.savefig(os.path.join(self.output_dir,"heatmap.png"))
         return
         
-    def GeneRankUpsetPlot(self, fig_width=None, signature_names=None):
+    def UpsetPlotDriverGenes(self, fig_width=None, signature_names=None):
         """
         Function to plot intersection of driver genes between different signatures 
         (option to either enter the signature names list for which you want the plot; 
@@ -733,7 +734,7 @@ class Beanie:
             print("Too many signature names to show upset plot")
             
         if self._driver_genes_run==False:
-            raise RuntimeEror("Run RankGenes() first.")
+            raise RuntimeEror("Run DriverGenes() first.")
             
         upset_df_prep = pd.DataFrame(columns=self.driver_genes.keys())
         for x in self.driver_genes.keys():
@@ -776,7 +777,7 @@ class Beanie:
         fig.savefig(os.path.join(self.output_dir,"upsetplot_topkgenes.png"))
         return
         
-    def SignatureGenesUpsetPlot(self, fig_width = None, signature_names=None):
+    def UpsetPlotSignatureGenes(self, fig_width = None, signature_names=None):
         """
         Function to plot intersection of genes in every signature.
         
@@ -826,89 +827,3 @@ class Beanie:
         fig.savefig(os.path.join(self.output_dir,"upsetplot_signatures.png"))
         return
     
-#     def EstimateConfidenceDifferentialExpression(self, alpha=0.05, min_ratio=0.9,
-#                                                  subsamples=501, **kwargs):
-#         """
-#         Function for generating saturation curve for simulation. Helps in estimating the confidence levels 
-        
-#         Parameters: 
-#             alpha                                  p-value cutoff
-#             min_ratio                              value of fold_rejection_ratio below which the signature is considered to be non-robust
-#             subsamples                             number of repeated subsamples in every fold
-#             minimum_expressing_samples             minimum number of samples that express gene to be considered
-#             minimum_frac_per_sample                minimum fraction of cells expressing for a gene to be considered expressed in a sample
-#             minimum_expression                     minimum expression value for a gene to be considered expressed in a cell
-        
-#         """
-#         if len(self.de_obj_simulation)!=0:
-#             print("Simulation has already been run.")
-#             return
-        
-#         step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
-        
-#         for i in tqdm(range(0,max_iter)):
-#             self.de_obj_simulation.append(de.ExcludeSampleSubsampledDENoCorrection(self.signature_scores.T, 
-#                                                            self.d1_all, self.d2_all, self.subsample_mode, 
-#                                                            group1_sample_cells=10+step_size*i, 
-#                                                            group2_sample_cells=10+step_size*i, 
-#                                                            samples_per_fold=subsamples, **kwargs))
-#             self.de_obj_simulation[i].run()
-#             self.de_summary_simulation.append(self.de_obj_simulation[i].summarize(alpha, min_ratio))
-            
-            
-#     def PlotConfidenceDifferentialExpression(self):
-#         """
-#         Function to plot number of signatures which are robust, non-robust, statistically significant, for different
-#         number of cells subsampled per patient.
-        
-#         """
-        
-#         robust_and_sig = []
-#         nonrobust_and_sig = []
-#         for i in range(len(self.de_summary_simulation)):
-#             robust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==False) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
-#             nonrobust_and_sig.append(self.de_summary_simulation[i][(self.de_summary_simulation[i].nonrobust==True) & (self.de_summary_simulation[i].p<=0.05)].shape[0])
-    
-#         conf_list = []
-#         for i in tqdm(range(len(self.de_obj_simulation))):
-#             temp_list = []
-#             temp_obj = self.de_obj_simulation[i]
-#             temp_list.extend([(temp_obj.folds[j].p<0.05).sum() for j in range(len(temp_obj.folds))])
-#             conf_list.append(temp_list)
-            
-#         flat_list = []
-#         for i in range(len(conf_list)):
-#             flat_list.append([item for sublist in conf_list[i] for item in sublist])
-            
-#         boxplot_df = pd.DataFrame(flat_list)
-        
-#         fig, axs = plt.subplots(figsize=(len(conf_list)/2,5))
-
-#         step_size,max_iters = CalculateMaxIterations(self.max_subsample_size)
-
-#         bp = axs.boxplot(boxplot_df,labels=[10+step_size*i for i in range(0,len(conf_list))],patch_artist=True);
-
-#         for box in bp['boxes']:
-#             box.set(color='#FB91A4', linewidth=2)
-#             box.set(facecolor = '#F5D9DD')
-#         for whisker in bp['whiskers']:
-#             whisker.set(color='#7570B3', linewidth=2)
-#         for cap in bp['caps']:
-#             cap.set(color='#7570B3', linewidth=2)
-#         for median in bp['medians']:
-#             median.set(color='#F3497F', linewidth=2)
-#         for flier in bp['fliers']:
-#             flier.set(marker='.', color='#E7298A', alpha=0.5)
-
-#         axs.plot(range(1,len(conf_list)+1),robust_and_sig, label="robust", color="#F3497F", marker="o")
-#         axs.plot(range(1,len(conf_list)+1),nonrobust_and_sig, label="non-robust", color="#C3A5E0", marker=".", linestyle='dashed', alpha=0.7)
-#         axs.plot([1,len(conf_list)+1],
-#                  [self.de_summary_simulation[0].shape[0],
-#                   self.de_summary_simulation[0].shape[0]],color="#000000", linestyle='dashed', label="total")
-#         axs.legend(bbox_to_anchor=(1.01, 1), loc='upper left');
-#         axs.set_xlabel("Number of cells subsampled per patient")
-#         axs.set_ylabel("Number of Signatures")
-#         axs.set_title("Confidence Level Estimation");
-#         self.confidence_de_plot = fig
-#         fig.savefig(os.path.join(self.output_dir,"confidence_plot_de.png"))
-#         return    
