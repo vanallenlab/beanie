@@ -2,7 +2,7 @@
 
 ## Dissecting tumor cell programs through group biology estimation in clinical single-cell transcriptomics
 
-[Nature Communications Paper](https://www.nature.com/articles/s41467-025-57377-6) | [Analysis](https://github.com/vanallenlab/beanie-analysis) | [AACR '23 Oral Presentation](https://aacrjournals.org/cancerres/article/83/7_Supplement/1120/722439/Abstract-1120-Dissecting-tumor-cell-programs)| [Cite Us](https://github.com/vanallenlab/beanie-analysis#citation)
+[Nature Communications Paper](https://www.nature.com/articles/s41467-025-57377-6) | [Analysis](https://github.com/vanallenlab/beanie-analysis) | [AACR '23 Oral Presentation](https://aacrjournals.org/cancerres/article/83/7_Supplement/1120/722439/Abstract-1120-Dissecting-tumor-cell-programs)| [Cite Us](https://github.com/vanallenlab/beanie#citation)
 
 BEANIE is a non-parameteric method for identification of differentially expressed gene signatures in clinical single-cell RNA-seq datasets. It can compare between two clinical groups of patients that share a subpopulation of cells, and calculates a biologically contextualized p-value (empirical p-value) and robustness for each gene signature. Tutorials can be found on the project [wiki](https://www.github.com/vanallenlab/beanie/wiki).
 
@@ -39,9 +39,9 @@ Requirements: python v3.7 and above.
 ### Citation
 If you've found this work useful, please cite the following :
 
-```
-Johri, S., Bi, K., Titchen, B.M. et al. Dissecting tumor cell programs through group biology estimation in clinical single-cell transcriptomics. Nat Commun 16, 2090 (2025). https://doi.org/10.1038/s41467-025-57377-6
-```
+
+> Johri, S., Bi, K., Titchen, B.M. et al. Dissecting tumor cell programs through group biology estimation in clinical single-cell transcriptomics. Nat Commun 16, 2090 (2025). https://doi.org/10.1038/s41467-025-57377-6
+
 
 ### Issues
 Please report issues directly to sjohri@g.harvard.edu.
